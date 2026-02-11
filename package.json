@@ -1,0 +1,20 @@
+{
+  "name": "stackpad",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "web": "npm run dev -w apps/web",
+    "backend": "npm run dev -w apps/backend"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
