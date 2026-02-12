@@ -7,10 +7,10 @@ import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
 
 const fadeUp = {
-    initial: { opacity: 0, y: 14 },
+    initial: { opacity: 0, y: 16 },
     whileInView: { opacity: 1, y: 0 },
     viewport: { once: true, amount: 0.25 },
-    transition: { duration: 0.4, ease: 'easeOut' as const },
+    transition: { duration: 0.42, ease: 'easeOut' as const },
 };
 
 export default function Home() {
@@ -24,34 +24,52 @@ export default function Home() {
                         Stackpad
                     </Link>
                     <div className="flex items-center gap-3">
-                        <Link href="/library" className="btn-secondary">
-                            Library
-                        </Link>
-                        <Link href="/author" className="btn-secondary">
-                            Author
-                        </Link>
+                        <Link href="/library" className="btn-secondary">Library</Link>
+                        <Link href="/author" className="btn-secondary">Author</Link>
                         <ThemeToggle />
                         <WalletConnect />
                     </div>
                 </div>
             </header>
 
-            <main>
-                <section className="layout-wrap pb-24 pt-24 md:pb-32 md:pt-32">
-                    <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }} className="max-w-5xl">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Readable by default</p>
+            <main className="relative overflow-hidden">
+                <div className="landing-stars pointer-events-none absolute inset-0" />
+                <div className="pointer-events-none absolute left-[6%] top-28 hidden md:block text-slate-400/70">
+                    <SparkleIcon />
+                </div>
+                <div className="pointer-events-none absolute right-[8%] top-44 hidden lg:block text-slate-400/70">
+                    <SparkleIcon />
+                </div>
+                <div className="pointer-events-none absolute left-[10%] top-[32rem] hidden lg:block text-slate-400/60">
+                    <TinyStarIcon />
+                </div>
+                <div className="landing-ornament pointer-events-none absolute right-[5%] top-24 hidden rounded-2xl p-3 lg:block">
+                    <BookArtIcon />
+                </div>
+                <div className="landing-ornament pointer-events-none absolute bottom-24 left-[7%] hidden rounded-2xl p-2.5 lg:block">
+                    <BookArtIcon compact />
+                </div>
+
+                <section className="layout-wrap pb-20 pt-22 md:pb-28 md:pt-28">
+                    <motion.div
+                        initial={{ opacity: 0, y: 14 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.45 }}
+                        className="relative z-10 max-w-5xl"
+                    >
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-As-You-Read</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            Long-form reading with precise pay-per-page access.
+                            The reading platform where each page unlocks with proof, not friction.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
-                            Stackpad keeps interface noise low and content clarity high. Pages unlock through x402 payment
-                            gating on Stacks so readers pay only for what they open.
+                            Stackpad combines immersive reading UI with x402 payment gating on Stacks. Readers unlock only what
+                            they open. Authors receive transparent payout routing on every paid access event.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
                                 <>
-                                    <Link href="/library" className="btn-primary">Start reading</Link>
-                                    <Link href="/author" className="btn-secondary">Publish content</Link>
+                                    <Link href="/library" className="btn-primary">Open library</Link>
+                                    <Link href="/author" className="btn-secondary">Publish a book</Link>
                                 </>
                             ) : (
                                 <>
@@ -63,86 +81,98 @@ export default function Home() {
                     </motion.div>
                 </section>
 
-                <section className="layout-wrap pb-20 md:pb-28">
+                <section className="layout-wrap pb-16 md:pb-20">
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
-                            ['Immersive reader', 'Minimal top bar, swipe navigation, and generous serif typography for steady focus.'],
-                            ['x402 compliant', 'Locked content returns 402 and unlocks after verifiable Stacks payment proof.'],
-                            ['Author-owned payouts', 'Payment recipient is set per book and displayed clearly before checkout.'],
-                        ].map(([title, detail]) => (
-                            <motion.article key={title} {...fadeUp} className="card">
-                                <h2 className="font-display text-2xl text-slate-900">{title}</h2>
-                                <p className="mt-4 text-sm leading-7 text-slate-600">{detail}</p>
+                            {
+                                title: 'Wallet-native',
+                                detail: 'Reader identity comes directly from Stacks wallet addresses. No account silo.',
+                                icon: <WalletIcon />,
+                            },
+                            {
+                                title: 'HTTP 402 Flow',
+                                detail: 'Locked resources return standards-based payment requirements and settle with facilitator verification.',
+                                icon: <LockIcon />,
+                            },
+                            {
+                                title: 'Reader-first UX',
+                                detail: 'Immersive typography, swipe navigation, and compact unlock actions keep attention on content.',
+                                icon: <BookIcon />,
+                            },
+                        ].map((item) => (
+                            <motion.article key={item.title} {...fadeUp} className="card">
+                                <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+                                    {item.icon}
+                                </div>
+                                <h2 className="font-display text-2xl text-slate-900">{item.title}</h2>
+                                <p className="mt-4 text-sm leading-7 text-slate-600">{item.detail}</p>
                             </motion.article>
                         ))}
                     </div>
                 </section>
 
-                <section className="layout-wrap pb-24 md:pb-36">
-                    <motion.div {...fadeUp} className="surface grid gap-10 p-8 md:grid-cols-[1.05fr_1fr] md:p-12">
-                        <div>
-                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Reading flow</p>
-                            <h2 className="mt-5 max-w-md font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                                Kindle calm with a Medium-like rhythm.
+                <section className="layout-wrap pb-18 md:pb-24">
+                    <motion.div {...fadeUp} className="surface p-8 md:p-12">
+                        <div className="mb-8">
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow detail</p>
+                            <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
+                                From page swipe to verified unlock in a clear sequence.
                             </h2>
                         </div>
-                        <div className="space-y-6 text-slate-600">
-                            <p className="leading-8">
-                                Horizontal swipes move page to page. Transitions stay soft and unobtrusive so you never lose
-                                context while navigating a chapter.
-                            </p>
-                            <p className="leading-8">
-                                If a page is gated, content dims with subtle blur and a compact payment action. No loud gradients,
-                                no dashboard clutter, and no wallet confusion.
-                            </p>
+
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                            {[
+                                ['1', 'Reader requests page', 'The app asks backend for the selected page endpoint.'],
+                                ['2', 'Backend returns 402', 'If locked, response includes payment-required terms (amount, asset, payTo, network).'],
+                                ['3', 'Buyer signs payload', 'Strict x402 buyer adapter creates payment-signature from configured signer key.'],
+                                ['4', 'Server settles', 'Backend verifies and settles through facilitator with declared requirements.'],
+                                ['5', 'Resource returned', 'On success, content response includes payment-response settlement metadata.'],
+                                ['6', 'Entitlement recorded', 'Reader entitlement is logged for future access checks and chapter coverage.'],
+                            ].map(([step, title, detail]) => (
+                                <article key={step} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                    <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
+                                    <h3 className="mt-2 text-lg font-medium text-slate-900">{title}</h3>
+                                    <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
+                                </article>
+                            ))}
                         </div>
                     </motion.div>
                 </section>
 
-                <section className="layout-wrap pb-24 md:pb-32">
+                <section className="layout-wrap pb-20 md:pb-28">
                     <div className="grid gap-6 md:grid-cols-2">
-                        <motion.div {...fadeUp} className="surface p-8 md:p-10">
-                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">x402 buyer path</p>
-                            <ol className="mt-6 space-y-5 text-slate-700">
-                                <li className="text-lg leading-8">Request content and receive payment requirements when locked.</li>
-                                <li className="text-lg leading-8">Pay in wallet with clear amount, recipient, and memo details.</li>
-                                <li className="text-lg leading-8">Submit proof and continue automatically once verified.</li>
-                            </ol>
-                        </motion.div>
+                        <motion.article {...fadeUp} className="surface p-8 md:p-10">
+                            <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+                                <ReaderIcon />
+                            </div>
+                            <h3 className="font-display text-3xl text-slate-900">Reader experience</h3>
+                            <p className="mt-4 text-base leading-8 text-slate-600">
+                                The interface stays minimal at every stage: focused reading typography, subtle dimming on locked
+                                pages, and one clear payment action. Diagnostics stay visible without crowding the flow.
+                            </p>
+                        </motion.article>
 
-                        <motion.div {...fadeUp} className="surface p-8 md:p-10">
-                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">x402 seller path</p>
-                            <ol className="mt-6 space-y-5 text-slate-700">
-                                <li className="text-lg leading-8">Define per-page pricing and author payout destination.</li>
-                                <li className="text-lg leading-8">Serve protected endpoints that return standards-based 402 payloads.</li>
-                                <li className="text-lg leading-8">Rely on backend verification before revealing gated content.</li>
-                            </ol>
-                        </motion.div>
+                        <motion.article {...fadeUp} className="surface p-8 md:p-10">
+                            <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+                                <AuthorIcon />
+                            </div>
+                            <h3 className="font-display text-3xl text-slate-900">Author controls</h3>
+                            <p className="mt-4 text-base leading-8 text-slate-600">
+                                Upload text or PDF with page detection, set microSTX pricing, and publish instantly. The backend
+                                validates page structure and payout metadata before committing records to storage.
+                            </p>
+                        </motion.article>
                     </div>
                 </section>
 
-                <section className="layout-wrap pb-24 md:pb-32">
-                    <motion.div {...fadeUp} className="max-w-4xl">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Built for facilitation</p>
-                        <h3 className="mt-5 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                            Facilitator-ready architecture without changing your reader experience.
-                        </h3>
-                        <p className="mt-8 text-lg leading-9 text-slate-600">
-                            Stackpad follows the x402 Stacks model so buyer, seller, and facilitator roles can interoperate.
-                            The frontend keeps this complexity hidden behind a clean unlock flow while preserving traceability in
-                            payment proof handling.
-                        </p>
-                    </motion.div>
-                </section>
-
-                <section className="layout-wrap pb-28 md:pb-36">
+                <section className="layout-wrap pb-26 md:pb-36">
                     <motion.div {...fadeUp} className="surface p-10 md:p-14">
                         <h4 className="max-w-2xl font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                            Read one page at a time, and pay only for value you keep.
+                            Start reading and verify every unlock path end-to-end.
                         </h4>
                         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                            Open the library to test the full paywall journey with clear pricing, direct recipient details, and
-                            minimal interaction overhead.
+                            Explore the library for live page gating or open author mode to publish test content with file-based
+                            page detection and pricing controls.
                         </p>
                         <div className="mt-10 flex flex-wrap gap-4">
                             <Link href="/library" className="btn-primary">Enter library</Link>
@@ -152,5 +182,86 @@ export default function Home() {
                 </section>
             </main>
         </div>
+    );
+}
+
+function SparkleIcon() {
+    return (
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m12 2 1.7 4.3L18 8l-4.3 1.7L12 14l-1.7-4.3L6 8l4.3-1.7L12 2Z" />
+            <path d="m18.5 14.5.9 2.2 2.1.8-2.1.9-.9 2.1-.8-2.1-2.2-.9 2.2-.8.8-2.2Z" />
+        </svg>
+    );
+}
+
+function TinyStarIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="m12 4 1.8 4.2L18 10l-4.2 1.8L12 16l-1.8-4.2L6 10l4.2-1.8L12 4Z" />
+        </svg>
+    );
+}
+
+function BookArtIcon({ compact = false }: { compact?: boolean }) {
+    return (
+        <svg width={compact ? '42' : '56'} height={compact ? '42' : '56'} viewBox="0 0 56 56" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="6" y="6" width="44" height="44" rx="12" />
+            <path d="M28 16v24" />
+            <path d="M16 19.5a3.5 3.5 0 0 1 3.5-3.5H28v24h-8.5a3.5 3.5 0 0 0-3.5 3.5V19.5Z" />
+            <path d="M40 19.5a3.5 3.5 0 0 0-3.5-3.5H28v24h8.5a3.5 3.5 0 0 1 3.5 3.5V19.5Z" />
+            <path d="m36.5 12.5.9 2.1 2.1.8-2.1.9-.9 2-.8-2-2.1-.9 2.1-.8.8-2.1Z" />
+        </svg>
+    );
+}
+
+function WalletIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 7a3 3 0 0 1 3-3h10a2 2 0 0 1 2 2v0" />
+            <path d="M3 7h16a2 2 0 0 1 2 2v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7Z" />
+            <path d="M17 12h4" />
+            <circle cx="17" cy="12" r="1" />
+        </svg>
+    );
+}
+
+function LockIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="10" width="16" height="10" rx="2" />
+            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+            <circle cx="12" cy="15" r="1.2" />
+        </svg>
+    );
+}
+
+function BookIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2V5Z" />
+            <path d="M8 7h8" />
+            <path d="M8 11h7" />
+            <path d="M8 15h6" />
+        </svg>
+    );
+}
+
+function ReaderIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v18" />
+            <path d="M5 5.5A3.5 3.5 0 0 1 8.5 2H12v20H8.5A3.5 3.5 0 0 1 5 18.5V5.5Z" />
+            <path d="M19 5.5A3.5 3.5 0 0 0 15.5 2H12v20h3.5a3.5 3.5 0 0 0 3.5-3.5V5.5Z" />
+        </svg>
+    );
+}
+
+function AuthorIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 20h4l10-10-4-4L4 16v4Z" />
+            <path d="m12 6 4 4" />
+            <path d="M20 20H10" />
+        </svg>
     );
 }

@@ -113,6 +113,18 @@
   .theme-toggle-knob {
     @apply h-5 w-5 rounded-full bg-[hsl(var(--surface))] border border-[hsl(var(--border))] shadow-sm transition-transform duration-200;
   }
+
+  .landing-stars {
+    background-image: radial-gradient(rgba(100, 116, 139, 0.18) 1px, transparent 1.4px);
+    background-size: 26px 26px;
+    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent 88%);
+    opacity: 0.28;
+  }
+
+  .landing-ornament {
+    @apply border border-slate-200 bg-slate-50 text-slate-500 shadow-[0_8px_24px_rgba(15,23,42,0.06)];
+    opacity: 0.72;
+  }
 }
 
 @layer utilities {
@@ -155,5 +167,18 @@
 
   [data-theme='dark'] .shadow-\[0_20px_40px_rgba\(15\2c 23\2c 42\2c 0\.12\)\] {
     box-shadow: 0 22px 44px rgba(0, 0, 0, 0.45) !important;
+  }
+
+  [data-theme='dark'] .landing-stars {
+    background-image: radial-gradient(rgba(148, 163, 184, 0.32) 1px, transparent 1.5px);
+    opacity: 0.14;
+  }
+
+  [data-theme='dark'] .landing-ornament {
+    border-color: hsl(var(--border));
+    background-color: hsl(var(--surface-soft));
+    color: hsl(var(--muted));
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    opacity: 0.5;
   }
 }
