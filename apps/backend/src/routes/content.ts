@@ -13,6 +13,11 @@ router.get('/:bookId/page/:pageNum', async (req: X402Request, res: Response) => 
         const bookId = parseInt(req.params.bookId, 10);
         const pageNum = parseInt(req.params.pageNum, 10);
 
+        if (Number.isNaN(bookId) || Number.isNaN(pageNum) || pageNum < 1) {
+            res.status(400).json({ error: 'Invalid book or page number' });
+            return;
+        }
+
         // Set context for x402 middleware
         req.bookId = bookId;
         req.pageNumber = pageNum;
@@ -66,6 +71,11 @@ router.get('/:bookId/chapter/:chapterNum', async (req: X402Request, res: Respons
     try {
         const bookId = parseInt(req.params.bookId, 10);
         const chapterNum = parseInt(req.params.chapterNum, 10);
+
+        if (Number.isNaN(bookId) || Number.isNaN(chapterNum) || chapterNum < 1) {
+            res.status(400).json({ error: 'Invalid book or chapter number' });
+            return;
+        }
 
         // Set context for x402 middleware
         req.bookId = bookId;

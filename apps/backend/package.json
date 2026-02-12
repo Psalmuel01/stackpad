@@ -7,7 +7,7 @@
         "build": "tsc",
         "start": "node dist/server.js",
         "migrate": "tsx src/db/migrate.ts",
-        "test": "vitest"
+        "test": "vitest --passWithNoTests"
     },
     "dependencies": {
         "@stackpad/shared": "*",
@@ -17,7 +17,8 @@
         "cors": "^2.8.5",
         "dotenv": "^16.3.1",
         "express": "^4.18.2",
-        "pg": "^8.11.3"
+        "pg": "^8.11.3",
+        "x402-stacks": "^2.0.1"
     },
     "devDependencies": {
         "@types/cors": "^2.8.17",

@@ -12,7 +12,14 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-    exposedHeaders: ['X-Payment-Required', 'WWW-Authenticate']
+    exposedHeaders: [
+        'payment-required',
+        'payment-response',
+        'x-payment',
+        'x-payment-response',
+        'X-Payment-Required',
+        'WWW-Authenticate',
+    ],
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

@@ -1,5 +1,46 @@
 import type { PaymentInstructions, X402Response } from '@stackpad/shared';
 
+export interface X402PaymentRequirement {
+    x402Version?: number;
+    scheme?: string;
+    network?: string;
+    maxAmountRequired?: string;
+    payTo?: string;
+    asset?: string;
+    resource?: string;
+    description?: string;
+    mimeType?: string;
+    extra?: {
+        memo?: string;
+        bookId?: number;
+        pageNumber?: number;
+        chapterNumber?: number;
+    };
+}
+
+export interface X402V2PaymentRequired {
+    x402Version: 2;
+    resource?: {
+        url?: string;
+        description?: string;
+        mimeType?: string;
+    };
+    accepts: Array<{
+        scheme: string;
+        network: string;
+        amount: string;
+        asset: string;
+        payTo: string;
+        maxTimeoutSeconds?: number;
+        extra?: {
+            memo?: string;
+            bookId?: number;
+            pageNumber?: number;
+            chapterNumber?: number;
+        };
+    }>;
+}
+
 /**
  * Parse payment instructions from HTTP 402 response headers
  */
@@ -19,6 +60,64 @@ export function parsePaymentInstructions(headers: Headers): PaymentInstructions 
 }
 
 /**
+ * Parse standardized x402 payment requirements from 402 headers.
+ */
+export function parseXPaymentRequirements(headers: Headers): X402PaymentRequirement[] | null {
+    const header = headers.get('x-payment');
+
+    if (!header) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(header) as unknown;
+        if (!Array.isArray(parsed)) {
+            return null;
+        }
+        return parsed as X402PaymentRequirement[];
+    } catch (error) {
+        console.error('Failed to parse x-payment requirements:', error);
+        return null;
+    }
+}
+
+/**
+ * Parse payment-required header from x402 v2 (base64 JSON payload).
+ */
+export function parsePaymentRequiredHeader(headers: Headers): X402V2PaymentRequired | null {
+    const encoded = headers.get('payment-required');
+    if (!encoded) {
+        return null;
+    }
+
+    try {
+        const json = decodeBase64(encoded);
+        const parsed = JSON.parse(json) as X402V2PaymentRequired;
+        if (parsed.x402Version !== 2 || !Array.isArray(parsed.accepts)) {
+            return null;
+        }
+        return parsed;
+    } catch (error) {
+        console.error('Failed to parse payment-required header:', error);
+        return null;
+    }
+}
+
+function decodeBase64(value: string): string {
+    const maybeAtob = (globalThis as { atob?: (input: string) => string }).atob;
+    if (typeof maybeAtob === 'function') {
+        return maybeAtob(value);
+    }
+
+    const maybeBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
+    if (maybeBuffer) {
+        return maybeBuffer.from(value, 'base64').toString('utf-8');
+    }
+
+    throw new Error('No base64 decoder available');
+}
+
+/**
  * Check if response is a 402 Payment Required
  */
 export function is402Response(response: Response): boolean {
@@ -29,7 +128,13 @@ export function is402Response(response: Response): boolean {
  * Format payment proof header for retry request
  */
 export function formatPaymentProofHeader(txHash: string): Record<string, string> {
+    const payload = JSON.stringify({
+        x402Version: 1,
+        txHash,
+    });
+
     return {
+        'x-payment-response': payload,
         'X-Payment-Proof': txHash,
     };
 }
@@ -94,7 +199,20 @@ export function microStxToStx(microStx: bigint): number {
 /**
  * Format STX amount for display
  */
-export function formatStxAmount(microStx: bigint): string {
-    const stx = microStxToStx(microStx);
+export function formatStxAmount(microStx: bigint | number | string): string {
+    const normalizedMicroStx = toMicroStx(microStx);
+    const stx = microStxToStx(normalizedMicroStx);
     return `${stx.toFixed(6)} STX`;
+}
+
+function toMicroStx(value: bigint | number | string): bigint {
+    if (typeof value === 'bigint') {
+        return value;
+    }
+
+    if (typeof value === 'number') {
+        return BigInt(Math.floor(value));
+    }
+
+    return BigInt(value);
 }

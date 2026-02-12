@@ -23,8 +23,8 @@ router.post('/upload', async (req: Request, res: Response) => {
 
         // Insert book
         const bookResult = await client.query(
-            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price, contract_book_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
             [
                 book.authorAddress,
@@ -34,6 +34,7 @@ router.post('/upload', async (req: Request, res: Response) => {
                 book.totalChapters || 0,
                 book.pagePrice,
                 book.chapterPrice,
+                book.contractBookId || null,
             ]
         );
 

@@ -22,15 +22,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const appConfig = new AppConfig(['store_write', 'publish_data']);
         const session = new UserSession({ appConfig });
         setUserSession(session);
+        const networkKey = getStacksNetworkKey();
 
         if (session.isUserSignedIn()) {
             setIsAuthenticated(true);
             const userData = session.loadUserData();
-            setUserAddress(userData.profile.stxAddress.testnet);
+            setUserAddress(resolveUserAddress(userData, networkKey));
         } else if (session.isSignInPending()) {
             session.handlePendingSignIn().then((userData) => {
                 setIsAuthenticated(true);
-                setUserAddress(userData.profile.stxAddress.testnet);
+                setUserAddress(resolveUserAddress(userData, networkKey));
+            }).catch((error) => {
+                console.error('Failed to complete pending sign-in:', error);
             });
         }
     }, []);
@@ -43,14 +46,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         showConnect({
             appDetails: {
-                name: 'eBook Platform',
-                icon: window.location.origin + '/favicon.ico', // Use default favicon
+                name: 'Stackpad',
+                icon: window.location.origin + '/favicon.ico',
             },
             redirectTo: '/',
             onFinish: () => {
                 const userData = userSession.loadUserData();
                 setIsAuthenticated(true);
-                setUserAddress(userData.profile.stxAddress.testnet);
+                setUserAddress(resolveUserAddress(userData, getStacksNetworkKey()));
             },
             userSession,
         });
@@ -85,4 +88,17 @@ export function useAuth() {
         throw new Error('useAuth must be used within an AuthProvider');
     }
     return context;
+}
+
+function getStacksNetworkKey(): 'testnet' | 'mainnet' {
+    return process.env.NEXT_PUBLIC_STACKS_NETWORK === 'mainnet' ? 'mainnet' : 'testnet';
+}
+
+function resolveUserAddress(userData: any, network: 'testnet' | 'mainnet'): string | null {
+    const addresses = userData?.profile?.stxAddress as { testnet?: string; mainnet?: string } | undefined;
+    if (!addresses) {
+        return null;
+    }
+
+    return addresses[network] || addresses.testnet || addresses.mainnet || null;
 }

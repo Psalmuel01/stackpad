@@ -1,140 +1,178 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
-import { useAuth } from '@/hooks/useAuth';
-import { apiClient } from '@/lib/api';
-import { PaymentModal } from '@/components/PaymentModal';
-import type { Book } from '@stackpad/shared';
-import { motion, AnimatePresence, useMotionValue, useTransform, PanInfo } from 'framer-motion';
-import { formatStxAmount } from '@stackpad/x402-client';
+import { useEffect, useRef, useState } from 'react';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { motion, AnimatePresence, PanInfo } from 'framer-motion';
+import type { Book } from '@stackpad/shared';
+import { formatStxAmount } from '@stackpad/x402-client';
+import { apiClient } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
+import { PaymentModal } from '@/components/PaymentModal';
+
+const VERIFY_RETRY_DELAY_MS = 3000;
+const MAX_VERIFICATION_RETRIES = 80;
+
+type ReaderState = 'idle' | 'loading' | 'locked' | 'verifying' | 'error' | 'ready';
+
+interface PaymentInstructions {
+    amount: string;
+    recipient: string;
+    memo: string;
+    network: string;
+}
 
 export default function ReaderPage() {
     const params = useParams();
-    const router = useRouter();
     const bookId = parseInt(params.bookId as string, 10);
     const { isAuthenticated, userAddress } = useAuth();
 
     const [book, setBook] = useState<Book | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
-    const [pageContent, setPageContent] = useState<string>('');
-    const [loading, setLoading] = useState(true);
+    const [pageContent, setPageContent] = useState('');
+    const [readerState, setReaderState] = useState<ReaderState>('idle');
+    const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-    // Payment modal state
     const [showPaymentModal, setShowPaymentModal] = useState(false);
-    const [paymentInstructions, setPaymentInstructions] = useState<any>(null);
+    const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
     const [pendingTxId, setPendingTxId] = useState<string | null>(null);
-
-    // Dimming state for locked pages
     const [isDimmed, setIsDimmed] = useState(false);
 
+    const requestCounterRef = useRef(0);
+
     useEffect(() => {
-        if (isAuthenticated && userAddress) {
-            loadBook();
+        if (!isAuthenticated || !userAddress || Number.isNaN(bookId)) {
+            return;
         }
+
+        void loadBook();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bookId, isAuthenticated, userAddress]);
 
     useEffect(() => {
-        if (book && userAddress) {
-            loadPageContent(currentPage);
+        if (!book || !userAddress) {
+            return;
         }
-    }, [currentPage, book, userAddress, pendingTxId]);
 
-    const loadBook = async () => {
+        void loadPageContent(currentPage);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [book, currentPage, userAddress]);
+
+    async function loadBook() {
         try {
             const bookData = await apiClient.getBook(bookId);
             setBook(bookData);
         } catch (error) {
             console.error('Failed to load book:', error);
+            setReaderState('error');
+            setStatusMessage('Book could not be loaded.');
         }
-    };
+    }
 
-    const loadPageContent = async (pageNum: number) => {
-        if (!userAddress) return;
+    async function loadPageContent(pageNum: number, paymentProof?: string, retryAttempt = 0) {
+        if (!userAddress) {
+            return;
+        }
 
-        setLoading(true);
+        const requestId = ++requestCounterRef.current;
+        const proof = paymentProof || pendingTxId || undefined;
+
+        setReaderState('loading');
+        setStatusMessage(null);
         setIsDimmed(false);
 
         try {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress, pendingTxId || undefined);
+            const result = await apiClient.getPage(bookId, pageNum, userAddress, proof);
+            if (requestId !== requestCounterRef.current) {
+                return;
+            }
 
-            if (result.requires402 && result.paymentInstructions) {
-                // Page requires payment
-                setPaymentInstructions(result.paymentInstructions);
-                setIsDimmed(true);
-                setShowPaymentModal(true);
-                setPageContent('');
-            } else if (result.content) {
-                // Page unlocked
+            if (result.content) {
                 setPageContent(result.content.content);
+                setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
                 setPendingTxId(null);
-            } else if (result.error) {
-                console.error('Error loading page:', result.error);
-                setPageContent('Error loading page content: ' + result.error);
-            } else if (result.requires402 && result.error) {
-                // Payment required but verification failed
-                if (result.error === 'Payment verification failed') {
-                    // This is likely due to mempool delay
-                    setPageContent('Payment sent! Verifying transaction on blockchain... (This may take a few seconds)');
-
-                    // Auto-retry after 3 seconds if we have a pending Tx
-                    if (pendingTxId) {
-                        setTimeout(() => loadPageContent(pageNum), 3000);
-                    }
-                } else {
-                    setPageContent(`Payment Error: ${result.error} ${result.details ? `(${result.details})` : ''}`);
-                }
-                // Keep modal closed if verifying, or maybe show a status?
-                setShowPaymentModal(false);
-            } else if (result.error) {
-                console.error('Error loading page:', result.error);
-                setPageContent('Error loading page content: ' + result.error);
-            } else {
-                // Fallback for when requires402 is true but paymentInstructions is missing (e.g. CORS issue)
-                if (result.requires402 && !result.paymentInstructions) {
-                    setPageContent('Error: Payment required but payment instructions missing. Check CORS configuration.');
-                }
+                setStatusMessage(null);
+                return;
             }
+
+            if (result.requires402) {
+                if (result.paymentInstructions) {
+                    setPaymentInstructions(result.paymentInstructions);
+                }
+
+                setIsDimmed(true);
+
+                if (proof) {
+                    setShowPaymentModal(false);
+                    if (retryAttempt < MAX_VERIFICATION_RETRIES) {
+                        setReaderState('verifying');
+                        setStatusMessage('Payment submitted. Waiting for blockchain confirmation...');
+                        window.setTimeout(() => {
+                            void loadPageContent(pageNum, proof, retryAttempt + 1);
+                        }, VERIFY_RETRY_DELAY_MS);
+                        return;
+                    }
+
+                    setReaderState('locked');
+                    setStatusMessage('Transaction is still pending. Retry verification, or wait for confirmation and try again.');
+                    return;
+                }
+
+                setReaderState('locked');
+                if (result.error) {
+                    const details = result.details ? ` (${result.details})` : '';
+                    setStatusMessage(`${result.error}${details}`);
+                }
+                setShowPaymentModal(true);
+                return;
+            }
+
+            setReaderState('error');
+            setPageContent(result.error || 'Failed to load page content');
         } catch (error) {
             console.error('Failed to load page:', error);
-            setPageContent('Failed to load page');
-        } finally {
-            setLoading(false);
+            setReaderState('error');
+            setPageContent('Failed to load page content');
         }
-    };
+    }
 
-    const handlePaymentComplete = (txId: string) => {
+    function handlePaymentComplete(txId: string) {
         setPendingTxId(txId);
         setShowPaymentModal(false);
-        // Retry loading the page with the payment proof
-        loadPageContent(currentPage);
-    };
+        setReaderState('verifying');
+        setStatusMessage('Payment sent. Verifying transaction...');
+        void loadPageContent(currentPage, txId, 0);
+    }
 
-    const goToNextPage = () => {
-        if (book && currentPage < book.totalPages) {
-            setCurrentPage(currentPage + 1);
+    function goToNextPage() {
+        if (!book || currentPage >= book.totalPages) {
+            return;
         }
-    };
+        setPendingTxId(null);
+        setPaymentInstructions(null);
+        setCurrentPage((prev) => prev + 1);
+    }
 
-    const goToPrevPage = () => {
-        if (currentPage > 1) {
-            setCurrentPage(currentPage - 1);
+    function goToPrevPage() {
+        if (currentPage <= 1) {
+            return;
         }
-    };
+        setPendingTxId(null);
+        setPaymentInstructions(null);
+        setCurrentPage((prev) => prev - 1);
+    }
 
-    // Swipe handling
-    const handleDragEnd = (info: PanInfo) => {
+    function handleDragEnd(info: PanInfo) {
         const threshold = 50;
         if (info.offset.x < -threshold) {
             goToNextPage();
         } else if (info.offset.x > threshold) {
             goToPrevPage();
         }
-    };
+    }
 
     if (!isAuthenticated) {
         return (
@@ -149,7 +187,7 @@ export default function ReaderPage() {
         );
     }
 
-    if (!book && !loading) {
+    if (!book && readerState === 'error') {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
                 <div className="text-center">
@@ -164,7 +202,6 @@ export default function ReaderPage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-            {/* Header */}
             <header className="glass sticky top-0 z-10 border-b border-white/20">
                 <div className="container mx-auto px-4 py-3">
                     <div className="flex justify-between items-center">
@@ -184,32 +221,28 @@ export default function ReaderPage() {
                 </div>
             </header>
 
-            {/* Reader */}
             <main className="container mx-auto px-4 py-8">
                 <div className="max-w-4xl mx-auto">
-                    {/* Book Title */}
                     {book && (
                         <div className="text-center mb-8">
                             <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white mb-2">
                                 {book.title}
                             </h1>
-                            <div className="w-32 h-1 bg-gradient-to-r from-primary-500 to-accent-500 mx-auto rounded-full"></div>
+                            <div className="w-32 h-1 bg-gradient-to-r from-primary-500 to-accent-500 mx-auto rounded-full" />
                         </div>
                     )}
 
-                    {/* Progress Bar */}
                     {book && (
                         <div className="mb-6">
                             <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                                 <div
                                     className="h-full bg-gradient-to-r from-primary-500 to-accent-500 transition-all duration-300"
                                     style={{ width: `${(currentPage / book.totalPages) * 100}%` }}
-                                ></div>
+                                />
                             </div>
                         </div>
                     )}
 
-                    {/* Page Content with Swipe */}
                     <motion.div
                         drag="x"
                         dragConstraints={{ left: 0, right: 0 }}
@@ -218,7 +251,7 @@ export default function ReaderPage() {
                         className="card min-h-[600px] relative overflow-hidden"
                     >
                         <AnimatePresence mode="wait">
-                            {loading ? (
+                            {readerState === 'loading' || readerState === 'idle' ? (
                                 <motion.div
                                     key="loading"
                                     initial={{ opacity: 0 }}
@@ -227,13 +260,13 @@ export default function ReaderPage() {
                                     className="flex items-center justify-center h-full min-h-[400px]"
                                 >
                                     <div className="text-center">
-                                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+                                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4" />
                                         <p className="text-slate-600 dark:text-slate-300">Loading page...</p>
                                     </div>
                                 </motion.div>
                             ) : (
                                 <motion.div
-                                    key={`page-${currentPage}`}
+                                    key={`page-${currentPage}-${readerState}`}
                                     initial={{ opacity: 0, x: 20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: -20 }}
@@ -242,48 +275,67 @@ export default function ReaderPage() {
                                 >
                                     {isDimmed ? (
                                         <div className="relative">
-                                            {/* Blurred Preview Content */}
                                             <div className="filter blur-sm select-none opacity-50 pointer-events-none" aria-hidden="true">
-                                                <h3>Chapter {book?.totalChapters ? Math.ceil(currentPage / (book.totalPages / book.totalChapters)) : 1}</h3>
+                                                <h3>Locked Preview</h3>
                                                 <p>
-                                                    The content of this page is locked. To continue reading, please unlock this page using your Stacks wallet.
-                                                    Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
-                                                    Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+                                                    This page is protected by x402 payment gating. Unlock access to continue reading the full text.
                                                 </p>
                                                 <p>
-                                                    Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.
-                                                    Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+                                                    Payment is processed in your Stacks wallet and verified by transaction proof before content is delivered.
                                                 </p>
                                                 <p>
-                                                    Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium,
-                                                    totam rem aperiam, eaque ipsa quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
+                                                    If you already paid, verification may need a short delay while your transfer confirms on-chain.
                                                 </p>
                                             </div>
 
-                                            {/* Lock Overlay */}
                                             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center">
-                                                <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/20 dark:border-slate-700/50 max-w-sm mx-auto transform hover:scale-105 transition-transform duration-300">
-                                                    <div className="w-16 h-16 bg-gradient-to-br from-primary-100 to-accent-100 dark:from-primary-900/50 dark:to-accent-900/50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-highlight">
+                                                <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/20 dark:border-slate-700/50 max-w-sm mx-auto">
+                                                    <div className="w-16 h-16 bg-gradient-to-br from-primary-100 to-accent-100 dark:from-primary-900/50 dark:to-accent-900/50 rounded-2xl flex items-center justify-center mx-auto mb-6">
                                                         <span className="text-3xl">🔒</span>
                                                     </div>
+
                                                     <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                                                        Premium Content
+                                                        {readerState === 'verifying' ? 'Verifying Payment' : 'Premium Content'}
                                                     </h3>
-                                                    <p className="text-slate-600 dark:text-slate-300 mb-6 leading-relaxed">
-                                                        Unlock this page for <span className="font-semibold text-primary-600 dark:text-primary-400">{paymentInstructions ? formatStxAmount(paymentInstructions.amount) : '...'} STX</span> to continue reading.
+
+                                                    <p className="text-slate-600 dark:text-slate-300 mb-4 leading-relaxed">
+                                                        {paymentInstructions
+                                                            ? `Unlock this page for ${formatStxAmount(paymentInstructions.amount)}`
+                                                            : 'Payment details unavailable. Retry the request.'}
                                                     </p>
-                                                    <button
-                                                        onClick={() => setShowPaymentModal(true)}
-                                                        className="btn-primary w-full shadow-lg shadow-primary-500/20"
-                                                    >
-                                                        Unlock Page
-                                                    </button>
+
+                                                    {statusMessage && (
+                                                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+                                                            {statusMessage}
+                                                        </p>
+                                                    )}
+
+                                                    {readerState === 'verifying' ? (
+                                                        <button
+                                                            onClick={() => {
+                                                                if (pendingTxId) {
+                                                                    void loadPageContent(currentPage, pendingTxId, MAX_VERIFICATION_RETRIES);
+                                                                }
+                                                            }}
+                                                            className="btn-secondary w-full"
+                                                        >
+                                                            Retry Verification
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => setShowPaymentModal(true)}
+                                                            className="btn-primary w-full"
+                                                            disabled={!paymentInstructions}
+                                                        >
+                                                            Unlock Page
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="min-h-[60vh] text-lg leading-relaxed text-slate-800 dark:text-slate-200">
-                                            {pageContent}
+                                        <div className="min-h-[60vh] text-lg leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+                                            {readerState === 'error' ? statusMessage || pageContent : pageContent}
                                         </div>
                                     )}
                                 </motion.div>
@@ -291,7 +343,6 @@ export default function ReaderPage() {
                         </AnimatePresence>
                     </motion.div>
 
-                    {/* Navigation Buttons */}
                     <div className="flex justify-between items-center mt-6">
                         <button
                             onClick={goToPrevPage}
@@ -322,7 +373,6 @@ export default function ReaderPage() {
                 </div>
             </main>
 
-            {/* Payment Modal */}
             {paymentInstructions && (
                 <PaymentModal
                     isOpen={showPaymentModal}

@@ -6,10 +6,10 @@ export interface Book {
     coverImageUrl?: string;
     totalPages: number;
     totalChapters: number;
-    pagePrice: bigint;      // µSTX
-    chapterPrice: bigint;   // µSTX
+    pagePrice: bigint | string;      // µSTX
+    chapterPrice: bigint | string;   // µSTX
     contractBookId?: number;
-    createdAt: Date;
+    createdAt: Date | string;
 }
 
 export interface Page {

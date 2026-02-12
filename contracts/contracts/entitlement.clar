@@ -6,6 +6,10 @@
 (define-constant ERR-ALREADY-UNLOCKED (err u201))
 (define-constant ERR-INVALID-PAYMENT (err u202))
 
+;; Contract ownership and delegated unlock operator.
+(define-data-var owner principal tx-sender)
+(define-data-var operator principal tx-sender)
+
 ;; Data maps for tracking access
 
 (define-map page-access
@@ -42,13 +46,38 @@
   )
 )
 
+(define-read-only (get-owner)
+  (ok (var-get owner))
+)
+
+(define-read-only (get-operator)
+  (ok (var-get operator))
+)
+
+(define-private (can-unlock-for (reader principal))
+  (or
+    (is-eq tx-sender reader)
+    (is-eq tx-sender (var-get operator))
+    (is-eq tx-sender (var-get owner))
+  )
+)
+
 ;; Public functions
+
+(define-public (set-operator (new-operator principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get owner)) ERR-NOT-AUTHORIZED)
+    (var-set operator new-operator)
+    (ok true)
+  )
+)
 
 (define-public (unlock-page (reader principal) (book-id uint) (page-num uint))
   (let
     (
       (current-height stacks-block-height)
     )
+    (asserts! (can-unlock-for reader) ERR-NOT-AUTHORIZED)
     ;; Check if already unlocked
     (asserts! (not (has-page-access reader book-id page-num)) ERR-ALREADY-UNLOCKED)
     
@@ -67,6 +96,7 @@
     (
       (current-height stacks-block-height)
     )
+    (asserts! (can-unlock-for reader) ERR-NOT-AUTHORIZED)
     ;; Check if already unlocked
     (asserts! (not (has-chapter-access reader book-id chapter-num)) ERR-ALREADY-UNLOCKED)
     

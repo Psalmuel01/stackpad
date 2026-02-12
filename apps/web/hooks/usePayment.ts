@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useAuth } from './useAuth';
 import { openSTXTransfer } from '@stacks/connect';
-import { STACKS_TESTNET } from '@stacks/network';
+import { STACKS_MAINNET, STACKS_TESTNET } from '@stacks/network';
 
 interface PaymentResult {
     success: boolean;
@@ -31,7 +31,7 @@ export function usePayment() {
                 recipient: recipientAddress,
                 amount: amount.toString(),
                 memo,
-                network: STACKS_TESTNET,
+                network: process.env.NEXT_PUBLIC_STACKS_NETWORK === 'mainnet' ? STACKS_MAINNET : STACKS_TESTNET,
                 appDetails: {
                     name: 'Stackpad',
                     icon: window.location.origin + '/favicon.ico',

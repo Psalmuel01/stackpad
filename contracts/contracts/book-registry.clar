@@ -6,6 +6,7 @@
 (define-constant ERR-BOOK-NOT-FOUND (err u101))
 (define-constant ERR-INVALID-PRICE (err u102))
 (define-constant ERR-BOOK-INACTIVE (err u103))
+(define-constant ERR-INVALID-TOTALS (err u104))
 
 ;; Data variables
 (define-data-var next-book-id uint u1)
@@ -71,6 +72,8 @@
     ;; Validate prices
     (asserts! (> page-price u0) ERR-INVALID-PRICE)
     (asserts! (> chapter-price u0) ERR-INVALID-PRICE)
+    (asserts! (> total-pages u0) ERR-INVALID-TOTALS)
+    (asserts! (> total-chapters u0) ERR-INVALID-TOTALS)
     
     ;; Store book data
     (map-set books

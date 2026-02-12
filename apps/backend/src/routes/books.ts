@@ -19,6 +19,7 @@ router.get('/', async (req: Request, res: Response) => {
                 total_chapters as "totalChapters", 
                 page_price as "pagePrice", 
                 chapter_price as "chapterPrice", 
+                contract_book_id as "contractBookId",
                 created_at as "createdAt"
              FROM books 
              ORDER BY created_at DESC`
@@ -89,6 +90,7 @@ router.post('/', async (req: Request, res: Response) => {
             totalChapters,
             pagePrice,
             chapterPrice,
+            contractBookId,
         } = req.body;
 
         // Validation
@@ -98,8 +100,8 @@ router.post('/', async (req: Request, res: Response) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price, contract_book_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING 
         id, 
         author_address as "authorAddress", 
@@ -109,8 +111,9 @@ router.post('/', async (req: Request, res: Response) => {
         total_chapters as "totalChapters", 
         page_price as "pagePrice", 
         chapter_price as "chapterPrice", 
+        contract_book_id as "contractBookId",
         created_at as "createdAt"`,
-            [authorAddress, title, coverImageUrl || null, totalPages, totalChapters || 0, pagePrice, chapterPrice]
+            [authorAddress, title, coverImageUrl || null, totalPages, totalChapters || 0, pagePrice, chapterPrice, contractBookId || null]
         );
 
         res.status(201).json({

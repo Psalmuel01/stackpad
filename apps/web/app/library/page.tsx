@@ -5,12 +5,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import type { Book } from '@stackpad/shared';
 import Link from 'next/link';
+import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { WalletConnect } from '@/components/WalletConnect';
 import { formatStxAmount } from '@stackpad/x402-client';
 
 export default function LibraryPage() {
-    const { isAuthenticated, userAddress } = useAuth();
+    const { isAuthenticated } = useAuth();
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -109,10 +110,12 @@ export default function LibraryPage() {
                                             {/* Cover Image */}
                                             <div className="relative h-64 rounded-lg overflow-hidden mb-4 bg-gradient-to-br from-primary-100 to-accent-100 dark:from-primary-900 dark:to-accent-900">
                                                 {book.coverImageUrl ? (
-                                                    <img
+                                                    <Image
                                                         src={book.coverImageUrl}
                                                         alt={book.title}
-                                                        className="w-full h-full object-cover"
+                                                        fill
+                                                        unoptimized
+                                                        className="object-cover"
                                                     />
                                                 ) : (
                                                     <div className="flex items-center justify-center h-full text-6xl">

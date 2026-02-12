@@ -18,6 +18,7 @@ export default function AuthorPage() {
     const [coverUrl, setCoverUrl] = useState('');
     const [bookContent, setBookContent] = useState('');
     const [pagePrice, setPagePrice] = useState('100000'); // microSTX
+    const [contractBookId, setContractBookId] = useState('');
 
     // Calculated State
     const totalPages = Math.ceil(bookContent.length / CHARS_PER_PAGE) || 1;
@@ -57,6 +58,7 @@ export default function AuthorPage() {
                     totalChapters: 1,
                     pagePrice,
                     chapterPrice: String(BigInt(pagePrice) * BigInt(5)), // Auto-calc chapter price
+                    contractBookId: contractBookId ? Number(contractBookId) : undefined,
                 },
                 pages
             );
@@ -66,6 +68,7 @@ export default function AuthorPage() {
             setBookTitle('');
             setCoverUrl('');
             setBookContent('');
+            setContractBookId('');
         } catch (error) {
             setMessage('❌ Failed to upload book');
             console.error(error);
@@ -204,6 +207,24 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor i
                                 />
                                 <p className="text-xs text-slate-500 mt-1">
                                     1 STX = 1,000,000 microSTX. Example: 100000 = 0.1 STX
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                                    On-chain Book ID (Optional)
+                                </label>
+                                <input
+                                    type="number"
+                                    value={contractBookId}
+                                    onChange={(e) => setContractBookId(e.target.value)}
+                                    min={1}
+                                    step={1}
+                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 transition-colors"
+                                    placeholder="Book ID from book-registry.clar"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Link this entry to your deployed contract record for future on-chain syncing.
                                 </p>
                             </div>
 
