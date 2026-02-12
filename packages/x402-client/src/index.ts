@@ -151,22 +151,23 @@ export function is402Response(response: Response): boolean {
  */
 export function formatPaymentProofHeader(proof: string | PaymentProofData): Record<string, string> {
     const normalized = typeof proof === 'string' ? { txHash: proof } : proof;
+    if (normalized.paymentSignature) {
+        return {
+            'payment-signature': normalized.paymentSignature,
+        };
+    }
+
+    // Legacy fallback for non-V2 servers.
     const payload = JSON.stringify({
         x402Version: 1,
         txHash: normalized.txHash,
         txRaw: normalized.txRaw,
     });
 
-    const headers: Record<string, string> = {
+    return {
         'x-payment-response': payload,
         'X-Payment-Proof': normalized.txHash,
     };
-
-    if (normalized.paymentSignature) {
-        headers['payment-signature'] = normalized.paymentSignature;
-    }
-
-    return headers;
 }
 
 /**

@@ -113,6 +113,51 @@ class ApiClient {
         return { content: data };
     }
 
+    async payPageWithX402Adapter(
+        bookId: number,
+        pageNum: number,
+        userAddress: string
+    ): Promise<{
+        content?: ContentResponse;
+        payment?: {
+            success?: boolean;
+            transaction?: string;
+            payer?: string;
+            network?: string;
+        } | null;
+        error?: string;
+        details?: string;
+        readerAddress?: string;
+        buyerAddress?: string;
+    }> {
+        const response = await fetch(
+            `/api/x402/page/${bookId}/${pageNum}?readerAddress=${encodeURIComponent(userAddress)}`,
+            { method: 'GET' }
+        );
+
+        const data = await response.json() as Record<string, unknown>;
+        if (!response.ok) {
+            return {
+                error: asString(data.error) || 'Failed to settle payment',
+                details: asString(data.details),
+                readerAddress: asString(data.readerAddress),
+                buyerAddress: asString(data.buyerAddress),
+            };
+        }
+
+        return {
+            content: data.data as ContentResponse,
+            payment: (data.payment as {
+                success?: boolean;
+                transaction?: string;
+                payer?: string;
+                network?: string;
+            } | null | undefined) || null,
+            readerAddress: asString(data.readerAddress),
+            buyerAddress: asString(data.buyerAddress),
+        };
+    }
+
     async uploadBook(book: UploadBookInput, pages: UploadPageInput[]): Promise<{ bookId: number }> {
         const response = await fetch(`${this.baseUrl}/api/author/upload`, {
             method: 'POST',

@@ -190,13 +190,21 @@ export async function recordPayment(
     bookId: number,
     amount: bigint,
     pageNumber?: number,
-    chapterNumber?: number
+    chapterNumber?: number,
+    _payerAddress?: string
 ): Promise<void> {
     await pool.query(
         `INSERT INTO payment_logs (reader_address, book_id, page_number, chapter_number, tx_hash, amount)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (tx_hash) DO NOTHING`,
-        [readerAddress, bookId, pageNumber || null, chapterNumber || null, txHash, amount.toString()]
+        [
+            readerAddress,
+            bookId,
+            pageNumber || null,
+            chapterNumber || null,
+            txHash,
+            amount.toString(),
+        ]
     );
 }
 

@@ -5,31 +5,18 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import type { Book } from '@stackpad/shared';
-import {
-    encodeBase64,
-    formatStxAmount,
-    type PaymentProofData,
-    type X402V2PaymentRequired,
-} from '@stackpad/x402-client';
+import { formatStxAmount } from '@stackpad/x402-client';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
-import { PaymentModal } from '@/components/PaymentModal';
 
-const VERIFY_RETRY_DELAY_MS = 3000;
-const MAX_VERIFICATION_RETRIES = 80;
-
-type ReaderState = 'idle' | 'loading' | 'locked' | 'verifying' | 'error' | 'ready';
+type ReaderState = 'idle' | 'loading' | 'locked' | 'error' | 'ready';
 
 interface PaymentInstructions {
     amount: string;
     recipient: string;
     memo: string;
     network: string;
-}
-
-interface PendingPayment extends PaymentProofData {
-    attempts: number;
 }
 
 export default function ReaderPage() {
@@ -46,9 +33,9 @@ export default function ReaderPage() {
 
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
-    const [paymentRequiredV2, setPaymentRequiredV2] = useState<X402V2PaymentRequired | null>(null);
-    const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
     const [isDimmed, setIsDimmed] = useState(false);
+    const [isSettlingPayment, setIsSettlingPayment] = useState(false);
+    const [buyerAddress, setBuyerAddress] = useState<string | null>(null);
 
     const requestCounterRef = useRef(0);
 
@@ -81,20 +68,19 @@ export default function ReaderPage() {
         }
     }
 
-    async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData, retryAttempt = 0) {
+    async function loadPageContent(pageNum: number) {
         if (!userAddress) {
             return;
         }
 
         const requestId = ++requestCounterRef.current;
-        const proof = paymentProof || pendingPayment || undefined;
 
         setReaderState('loading');
         setStatusMessage(null);
         setIsDimmed(false);
 
         try {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress, proof);
+            const result = await apiClient.getPage(bookId, pageNum, userAddress);
             if (requestId !== requestCounterRef.current) {
                 return;
             }
@@ -104,7 +90,6 @@ export default function ReaderPage() {
                 setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
-                setPendingPayment(null);
                 setStatusMessage(null);
                 return;
             }
@@ -113,45 +98,9 @@ export default function ReaderPage() {
                 if (result.paymentInstructions) {
                     setPaymentInstructions(result.paymentInstructions);
                 }
-                if (result.paymentRequiredV2) {
-                    setPaymentRequiredV2(result.paymentRequiredV2);
-                }
-
-                setIsDimmed(true);
-
-                if (proof) {
-                    const details = `${result.error || ''} ${result.details || ''}`.toLowerCase();
-                    const isTerminal =
-                        details.includes('recipient_mismatch')
-                        || details.includes('amount_insufficient')
-                        || details.includes('invalid_payment_signature')
-                        || details.includes('memo does not match')
-                        || details.includes('for different content');
-
-                    if (isTerminal) {
-                        setReaderState('locked');
-                        setStatusMessage(result.details || result.error || 'Payment was submitted but validation failed.');
-                        return;
-                    }
-
-                    setShowPaymentModal(false);
-                    setPendingPayment(prev => prev ? { ...prev, attempts: retryAttempt + 1 } : prev);
-
-                    if (retryAttempt < MAX_VERIFICATION_RETRIES) {
-                        setReaderState('verifying');
-                        setStatusMessage('Payment submitted. Waiting for verification...');
-                        window.setTimeout(() => {
-                            void loadPageContent(pageNum, proof, retryAttempt + 1);
-                        }, VERIFY_RETRY_DELAY_MS);
-                        return;
-                    }
-
-                    setReaderState('locked');
-                    setStatusMessage('Still waiting for confirmation. Use Retry Verification or refresh in a minute.');
-                    return;
-                }
 
                 setReaderState('locked');
+                setIsDimmed(true);
                 if (result.error) {
                     const details = result.details ? ` (${result.details})` : '';
                     setStatusMessage(`${result.error}${details}`);
@@ -169,41 +118,59 @@ export default function ReaderPage() {
         }
     }
 
-    function handlePaymentComplete(payment: { txId: string; txRaw?: string }) {
-        const accepted = paymentRequiredV2?.accepts?.[0];
-        const paymentSignature = createPaymentSignature(payment.txRaw, accepted);
-        const proof: PendingPayment = {
-            txHash: payment.txId,
-            txRaw: payment.txRaw,
-            paymentSignature,
-            attempts: 0,
-        };
+    async function settleWithStrictBuyerAdapter() {
+        if (!userAddress) {
+            return;
+        }
 
-        setPendingPayment(proof);
-        setShowPaymentModal(false);
-        setReaderState('verifying');
-        setStatusMessage('Payment sent. Verifying transaction...');
-        void loadPageContent(currentPage, proof, 0);
+        setIsSettlingPayment(true);
+        setReaderState('loading');
+        setStatusMessage('Settling payment via strict x402 buyer adapter...');
+
+        try {
+            const result = await apiClient.payPageWithX402Adapter(bookId, currentPage, userAddress);
+            if (result.buyerAddress) {
+                setBuyerAddress(result.buyerAddress);
+            }
+
+            if (result.content) {
+                setPageContent(result.content.content);
+                setReaderState('ready');
+                setIsDimmed(false);
+                setShowPaymentModal(false);
+                setStatusMessage(null);
+                return;
+            }
+
+            setReaderState('locked');
+            setIsDimmed(true);
+            setShowPaymentModal(true);
+            setStatusMessage(result.details || result.error || 'Payment settlement failed');
+        } catch (error) {
+            console.error('Strict x402 payment failed:', error);
+            setReaderState('locked');
+            setIsDimmed(true);
+            setShowPaymentModal(true);
+            setStatusMessage(error instanceof Error ? error.message : 'Payment settlement failed');
+        } finally {
+            setIsSettlingPayment(false);
+        }
     }
 
     function goToNextPage() {
         if (!book || currentPage >= book.totalPages) {
             return;
         }
-        setPendingPayment(null);
         setPaymentInstructions(null);
-        setPaymentRequiredV2(null);
-        setCurrentPage(prev => prev + 1);
+        setCurrentPage((prev) => prev + 1);
     }
 
     function goToPrevPage() {
         if (currentPage <= 1) {
             return;
         }
-        setPendingPayment(null);
         setPaymentInstructions(null);
-        setPaymentRequiredV2(null);
-        setCurrentPage(prev => prev - 1);
+        setCurrentPage((prev) => prev - 1);
     }
 
     function handleDragEnd(info: PanInfo) {
@@ -227,7 +194,7 @@ export default function ReaderPage() {
                     <div className="surface w-full max-w-xl p-10 text-center md:p-12">
                         <h1 className="font-display text-4xl text-slate-900">Connect to read</h1>
                         <p className="mt-5 text-lg leading-8 text-slate-600">
-                            A connected wallet is required to request locked pages and submit x402 payment proof.
+                            A connected wallet is required to load your reader identity for x402 content requests.
                         </p>
                         <div className="mt-10 flex justify-center">
                             <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
@@ -319,10 +286,8 @@ export default function ReaderPage() {
                                         <div className="absolute inset-0 rounded-2xl backdrop-blur-[1.5px]" />
                                         <div className="surface relative z-10 w-full max-w-sm p-6 text-center md:p-8">
                                             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Locked page</p>
-                                            <h2 className="mt-3 font-display text-3xl text-slate-900">
-                                                {readerState === 'verifying' ? 'Verifying payment' : `Unlock page ${currentPage}`}
-                                            </h2>
-                                            <p className="mt-4 text-sm leading-7 text-slate-600">
+                                            <h2 className="mt-3 font-display text-3xl text-slate-900">Unlock page {currentPage}</h2>
+                                            <p className="mt-4 text-xs leading-7 text-slate-600">
                                                 {paymentInstructions
                                                     ? `Price: ${formatStxAmount(paymentInstructions.amount)} paid to ${paymentInstructions.recipient}.`
                                                     : 'Payment details unavailable. Retry the request.'}
@@ -332,27 +297,20 @@ export default function ReaderPage() {
                                                 <p className="mt-3 text-sm leading-6 text-slate-500">{statusMessage}</p>
                                             )}
 
+                                            {buyerAddress && (
+                                                <p className="mt-2 text-xs leading-5 text-slate-500">
+                                                    Strict buyer account: {buyerAddress.slice(0, 6)}...{buyerAddress.slice(-4)}
+                                                </p>
+                                            )}
+
                                             <div className="mt-6">
-                                                {readerState === 'verifying' ? (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (pendingPayment) {
-                                                                void loadPageContent(currentPage, pendingPayment, MAX_VERIFICATION_RETRIES);
-                                                            }
-                                                        }}
-                                                        className="btn-secondary w-full"
-                                                    >
-                                                        Retry verification
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => setShowPaymentModal(true)}
-                                                        disabled={!paymentInstructions}
-                                                        className="btn-primary w-full"
-                                                    >
-                                                        Open payment
-                                                    </button>
-                                                )}
+                                                <button
+                                                    onClick={() => setShowPaymentModal(true)}
+                                                    disabled={!paymentInstructions}
+                                                    className="btn-primary w-full"
+                                                >
+                                                    Open payment
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -383,36 +341,60 @@ export default function ReaderPage() {
                 </div>
             </main>
 
-            {paymentInstructions && (
-                <PaymentModal
-                    isOpen={showPaymentModal}
-                    pageNumber={currentPage}
-                    amount={BigInt(paymentInstructions.amount)}
-                    recipient={paymentInstructions.recipient}
-                    memo={paymentInstructions.memo}
-                    onClose={() => setShowPaymentModal(false)}
-                    onPaymentComplete={handlePaymentComplete}
-                />
-            )}
+            <AnimatePresence>
+                {showPaymentModal && paymentInstructions && (
+                    <>
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={() => setShowPaymentModal(false)}
+                            className="fixed inset-0 z-40 bg-black/40"
+                        />
+
+                        <div className="fixed inset-x-0 bottom-0 z-50 px-4 pb-6 md:inset-0 md:flex md:items-center md:justify-center md:pb-0">
+                            <motion.div
+                                initial={{ opacity: 0, y: 32 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 32 }}
+                                transition={{ duration: 0.24, ease: 'easeOut' }}
+                                className="surface mx-auto w-full max-w-md rounded-3xl p-6 shadow-[0_20px_40px_rgba(15,23,42,0.12)]"
+                            >
+                                <div className="mb-5 flex items-start justify-between">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Strict x402 v2 buyer</p>
+                                        <h2 className="mt-2 text-2xl font-display text-slate-900">Settle payment for page {currentPage}</h2>
+                                    </div>
+                                    <button onClick={() => setShowPaymentModal(false)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
+                                        ×
+                                    </button>
+                                </div>
+
+                                <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
+                                    <p className="text-sm text-slate-500">Price</p>
+                                    <p className="mt-1 text-3xl font-display text-slate-900">{formatStxAmount(paymentInstructions.amount)}</p>
+                                    <p className="mt-3 break-all text-xs text-slate-500">Paid to: {paymentInstructions.recipient}</p>
+                                </div>
+
+                                {statusMessage && (
+                                    <p className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                        {statusMessage}
+                                    </p>
+                                )}
+
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowPaymentModal(false)} disabled={isSettlingPayment} className="btn-secondary flex-1">
+                                        Cancel
+                                    </button>
+                                    <button onClick={() => void settleWithStrictBuyerAdapter()} disabled={isSettlingPayment} className="btn-primary flex-1">
+                                        {isSettlingPayment ? 'Settling...' : 'Pay via adapter'}
+                                    </button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    </>
+                )}
+            </AnimatePresence>
         </div>
     );
-}
-
-function createPaymentSignature(
-    txRaw: string | undefined,
-    accepted?: X402V2PaymentRequired['accepts'][number]
-): string | undefined {
-    if (!txRaw || !accepted) {
-        return undefined;
-    }
-
-    const payload = {
-        x402Version: 2,
-        accepted,
-        payload: {
-            transaction: txRaw,
-        },
-    };
-
-    return encodeBase64(JSON.stringify(payload));
 }
