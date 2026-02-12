@@ -1,50 +1,57 @@
 'use client';
 
-import { useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
-import { apiClient } from '@/lib/api';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
+import { useAuth } from '@/hooks/useAuth';
+import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
 
 const CHARS_PER_PAGE = 1500;
 
+type NoticeTone = 'success' | 'error';
+
+interface Notice {
+    text: string;
+    tone: NoticeTone;
+}
+
 export default function AuthorPage() {
-    const { isAuthenticated, userAddress } = useAuth();
+    const { isAuthenticated, userAddress, connectWallet } = useAuth();
     const [uploading, setUploading] = useState(false);
 
-    // Form State
     const [bookTitle, setBookTitle] = useState('');
     const [coverUrl, setCoverUrl] = useState('');
     const [bookContent, setBookContent] = useState('');
-    const [pagePrice, setPagePrice] = useState('100000'); // microSTX
+    const [pagePrice, setPagePrice] = useState('100000');
     const [contractBookId, setContractBookId] = useState('');
 
-    // Calculated State
-    const totalPages = Math.ceil(bookContent.length / CHARS_PER_PAGE) || 1;
-    const [message, setMessage] = useState('');
+    const [notice, setNotice] = useState<Notice | null>(null);
 
-    const handleUpload = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!userAddress) return;
+    const totalPages = useMemo(() => Math.max(1, Math.ceil(bookContent.length / CHARS_PER_PAGE)), [bookContent.length]);
+
+    async function handleUpload(event: React.FormEvent) {
+        event.preventDefault();
+        if (!userAddress) {
+            return;
+        }
 
         if (!bookContent.trim()) {
-            setMessage('❌ Please enter book content');
+            setNotice({ text: 'Please add content before publishing.', tone: 'error' });
             return;
         }
 
         setUploading(true);
-        setMessage('');
+        setNotice(null);
 
         try {
-            // Chunk content into pages
             const pages = [];
-            for (let i = 0; i < totalPages; i++) {
+            for (let i = 0; i < totalPages; i += 1) {
                 const start = i * CHARS_PER_PAGE;
                 const end = start + CHARS_PER_PAGE;
                 pages.push({
                     pageNumber: i + 1,
-                    chapterNumber: 1, // Simple single chapter for now
+                    chapterNumber: 1,
                     content: bookContent.slice(start, end),
                 });
             }
@@ -57,194 +64,188 @@ export default function AuthorPage() {
                     totalPages,
                     totalChapters: 1,
                     pagePrice,
-                    chapterPrice: String(BigInt(pagePrice) * BigInt(5)), // Auto-calc chapter price
+                    chapterPrice: String(BigInt(pagePrice) * BigInt(5)),
                     contractBookId: contractBookId ? Number(contractBookId) : undefined,
                 },
                 pages
             );
 
-            setMessage('✅ Book uploaded successfully!');
-            // Reset form
+            setNotice({ text: 'Book uploaded successfully.', tone: 'success' });
             setBookTitle('');
             setCoverUrl('');
             setBookContent('');
             setContractBookId('');
         } catch (error) {
-            setMessage('❌ Failed to upload book');
             console.error(error);
+            setNotice({ text: 'Upload failed. Check server logs and try again.', tone: 'error' });
         } finally {
             setUploading(false);
         }
-    };
+    }
 
-    const handleSampleContent = () => {
-        const sample = `It was the best of times, it was the worst of times... 
-    
-(This is a sample book content that is long enough to span multiple pages. In a real application, this would be the actual text of the book that you want to sell.)
-
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
-
-[... repeating content for demo ...]
-    `.repeat(50);
-        setBookTitle("A Tale of Two Cities (Sample)");
+    function handleSampleContent() {
+        const sample = `It was the best of times, it was the worst of times.\n\nThis sample content is used to create enough text for multiple pages in Stackpad.\n\n`.repeat(140);
+        setBookTitle('A Tale of Two Cities (Sample)');
         setBookContent(sample);
-    };
+    }
 
     if (!isAuthenticated) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-4">Please connect your wallet</h1>
-                    <Link href="/" className="btn-primary">
-                        Go to Home
-                    </Link>
-                </div>
+            <div className="app-shell">
+                <header className="topbar">
+                    <div className="layout-wrap flex h-20 items-center justify-between">
+                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    </div>
+                </header>
+                <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
+                    <div className="surface w-full max-w-xl p-10 text-center md:p-12">
+                        <h1 className="font-display text-4xl text-slate-900">Connect to publish</h1>
+                        <p className="mt-5 text-lg leading-8 text-slate-600">
+                            Your wallet address is used as the default author payout destination for newly uploaded books.
+                        </p>
+                        <div className="mt-10 flex justify-center">
+                            <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
+                        </div>
+                    </div>
+                </main>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-indigo-950">
-            <header className="glass sticky top-0 z-10 border-b border-white/20">
-                <div className="container mx-auto px-4 py-4">
-                    <div className="flex justify-between items-center">
-                        <Link href="/" className="text-2xl font-display font-bold bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">
-                            Stackpad
-                        </Link>
-                        <div className="flex items-center gap-4">
-                            <Link href="/library" className="btn-secondary text-sm">
-                                Back to Library
-                            </Link>
-                            <WalletConnect />
-                        </div>
+        <div className="app-shell">
+            <header className="topbar">
+                <div className="layout-wrap flex h-20 items-center justify-between">
+                    <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    <div className="flex items-center gap-3">
+                        <Link href="/library" className="btn-secondary">Library</Link>
+                        <WalletConnect />
                     </div>
                 </div>
             </header>
 
-            <main className="container mx-auto px-4 py-12">
+            <main className="layout-wrap py-14 md:py-20">
                 <motion.div
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="max-w-3xl mx-auto"
+                    transition={{ duration: 0.35 }}
+                    className="mx-auto max-w-3xl"
                 >
-                    <h1 className="text-4xl font-display font-bold mb-8 text-slate-900 dark:text-white">
-                        ✍️ Author Dashboard
-                    </h1>
+                    <div className="mb-11">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Author</p>
+                        <h1 className="mt-5 font-display text-5xl leading-tight text-slate-900 md:text-6xl">
+                            Publish chapters with page-level pricing.
+                        </h1>
+                        <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
+                            Upload raw text, set microSTX pricing, and connect off-chain metadata to your on-chain book ID.
+                        </p>
+                    </div>
 
-                    <div className="card">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-bold">Upload New Book</h2>
-                            <button
-                                type="button"
-                                onClick={handleSampleContent}
-                                className="text-sm text-primary-600 hover:text-primary-700 font-semibold"
-                            >
-                                Auto-fill Sample
-                            </button>
+                    <section className="card">
+                        <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
+                            <h2 className="font-display text-3xl text-slate-900">New book</h2>
+                            <button type="button" onClick={handleSampleContent} className="btn-secondary">Load sample text</button>
                         </div>
 
-                        <form onSubmit={handleUpload} className="space-y-6">
-                            {/* Title */}
+                        <form onSubmit={handleUpload} className="space-y-7">
                             <div>
-                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                    Book Title
+                                <label htmlFor="book-title" className="mb-2 block text-sm font-medium text-slate-700">
+                                    Book title
                                 </label>
                                 <input
+                                    id="book-title"
                                     type="text"
                                     value={bookTitle}
-                                    onChange={(e) => setBookTitle(e.target.value)}
+                                    onChange={(event) => setBookTitle(event.target.value)}
                                     required
-                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 dark:focus:ring-primary-900 transition-colors"
-                                    placeholder="Enter book title..."
+                                    className="input-base"
+                                    placeholder="Enter title"
                                 />
                             </div>
 
-                            {/* Cover Image URL */}
                             <div>
-                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                    Cover Image URL (Optional)
+                                <label htmlFor="cover-url" className="mb-2 block text-sm font-medium text-slate-700">
+                                    Cover image URL (optional)
                                 </label>
                                 <input
+                                    id="cover-url"
                                     type="url"
                                     value={coverUrl}
-                                    onChange={(e) => setCoverUrl(e.target.value)}
-                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 transition-colors"
+                                    onChange={(event) => setCoverUrl(event.target.value)}
+                                    className="input-base"
                                     placeholder="https://example.com/cover.jpg"
                                 />
                             </div>
 
-                            {/* Content Input */}
                             <div>
-                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                    Book Content (Text)
+                                <label htmlFor="book-content" className="mb-2 block text-sm font-medium text-slate-700">
+                                    Book content
                                 </label>
                                 <textarea
+                                    id="book-content"
                                     value={bookContent}
-                                    onChange={(e) => setBookContent(e.target.value)}
+                                    onChange={(event) => setBookContent(event.target.value)}
                                     required
-                                    rows={12}
-                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 transition-colors font-mono text-sm leading-relaxed"
-                                    placeholder="Paste your book content here..."
+                                    rows={14}
+                                    className="input-base font-mono text-sm leading-relaxed"
+                                    placeholder="Paste full text"
                                 />
-                                <p className="text-xs text-slate-500 mt-2 text-right">
-                                    {bookContent.length} characters • ~{totalPages} pages
+                                <p className="mt-2 text-right text-xs text-slate-500">
+                                    {bookContent.length} characters · about {totalPages} pages
                                 </p>
                             </div>
 
-                            {/* Pricing */}
                             <div>
-                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                    Price per Page (microSTX)
+                                <label htmlFor="page-price" className="mb-2 block text-sm font-medium text-slate-700">
+                                    Price per page (microSTX)
                                 </label>
                                 <input
+                                    id="page-price"
                                     type="number"
                                     value={pagePrice}
-                                    onChange={(e) => setPagePrice(e.target.value)}
+                                    onChange={(event) => setPagePrice(event.target.value)}
+                                    required
                                     min={0}
                                     step={100}
-                                    required
-                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 transition-colors"
+                                    className="input-base"
                                 />
-                                <p className="text-xs text-slate-500 mt-1">
-                                    1 STX = 1,000,000 microSTX. Example: 100000 = 0.1 STX
-                                </p>
+                                <p className="mt-2 text-xs text-slate-500">1 STX = 1,000,000 microSTX.</p>
                             </div>
 
                             <div>
-                                <label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                                    On-chain Book ID (Optional)
+                                <label htmlFor="contract-book-id" className="mb-2 block text-sm font-medium text-slate-700">
+                                    On-chain book ID (optional)
                                 </label>
                                 <input
+                                    id="contract-book-id"
                                     type="number"
                                     value={contractBookId}
-                                    onChange={(e) => setContractBookId(e.target.value)}
+                                    onChange={(event) => setContractBookId(event.target.value)}
                                     min={1}
                                     step={1}
-                                    className="w-full px-4 py-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-primary-500 transition-colors"
-                                    placeholder="Book ID from book-registry.clar"
+                                    className="input-base"
+                                    placeholder="Book ID from contract"
                                 />
-                                <p className="text-xs text-slate-500 mt-1">
-                                    Link this entry to your deployed contract record for future on-chain syncing.
-                                </p>
                             </div>
 
-                            {/* Status Message */}
-                            {message && (
-                                <div className={`p-4 rounded-xl ${message.startsWith('✅') ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
-                                    {message}
+                            {notice && (
+                                <div
+                                    className={[
+                                        'rounded-xl border px-4 py-3 text-sm',
+                                        notice.tone === 'success'
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                            : 'border-rose-200 bg-rose-50 text-rose-700',
+                                    ].join(' ')}
+                                >
+                                    {notice.text}
                                 </div>
                             )}
 
-                            {/* Submit Button */}
-                            <button
-                                type="submit"
-                                disabled={uploading}
-                                className="btn-primary w-full text-lg py-4"
-                            >
-                                {uploading ? 'Processing & Uploading...' : 'Publish Book'}
+                            <button type="submit" disabled={uploading} className="btn-primary w-full py-3 text-base">
+                                {uploading ? 'Uploading...' : 'Publish book'}
                             </button>
                         </form>
-                    </div>
+                    </section>
                 </motion.div>
             </main>
         </div>

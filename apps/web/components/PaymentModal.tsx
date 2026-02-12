@@ -1,9 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { formatStxAmount } from '@stackpad/x402-client';
 import { usePayment } from '@/hooks/usePayment';
-import { useState } from 'react';
 
 interface PaymentModalProps {
     isOpen: boolean;
@@ -32,117 +32,65 @@ export function PaymentModal({
     const handlePay = async () => {
         setError(null);
         const result = await initiatePayment(recipient, amount, memo);
-
         if (result.success && result.txId) {
-            onPaymentComplete({
-                txId: result.txId,
-                txRaw: result.txRaw,
-            });
-        } else {
-            setError(result.error || 'Payment failed');
+            onPaymentComplete({ txId: result.txId, txRaw: result.txRaw });
+            return;
         }
+        setError(result.error || 'Payment failed');
     };
 
     return (
         <AnimatePresence>
             {isOpen && (
                 <>
-                    {/* Backdrop */}
                     <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+                        className="fixed inset-0 z-40 bg-black/40"
                     />
 
-                    {/* Modal */}
-                    <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+                    <div className="fixed inset-x-0 bottom-0 z-50 px-4 pb-6 md:inset-0 md:flex md:items-center md:justify-center md:pb-0">
                         <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                            transition={{ type: 'spring', duration: 0.4 }}
-                            className="glass rounded-3xl shadow-2xl max-w-md w-full p-8 relative"
+                            initial={{ opacity: 0, y: 32 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 32 }}
+                            transition={{ duration: 0.24, ease: 'easeOut' }}
+                            className="surface mx-auto w-full max-w-md rounded-3xl p-6 shadow-[0_20px_40px_rgba(15,23,42,0.12)]"
                         >
-                            {/* Close Button */}
-                            <button
-                                onClick={onClose}
-                                className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                            >
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-
-                            {/* Icon */}
-                            <div className="flex justify-center mb-6">
-                                <div className="w-16 h-16 rounded-full bg-gradient-to-r from-primary-500 to-accent-500 flex items-center justify-center text-3xl">
-                                    🔒
+                            <div className="mb-5 flex items-start justify-between">
+                                <div>
+                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Locked content</p>
+                                    <h2 className="mt-2 text-2xl font-display text-slate-900">
+                                        {pageNumber !== undefined ? `Unlock page ${pageNumber}` : `Unlock chapter ${chapterNumber}`}
+                                    </h2>
                                 </div>
+                                <button onClick={onClose} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
+                                    ×
+                                </button>
                             </div>
 
-                            {/* Title */}
-                            <h2 className="text-2xl font-display font-bold text-center mb-2 text-slate-900 dark:text-white">
-                                Unlock Content
-                            </h2>
-                            <p className="text-center text-slate-600 dark:text-slate-300 mb-6">
-                                {pageNumber !== undefined
-                                    ? `Pay to unlock page ${pageNumber}`
-                                    : `Pay to unlock chapter ${chapterNumber}`}
-                            </p>
-
-                            {/* Price Display */}
-                            <div className="card bg-gradient-to-r from-primary-50 to-accent-50 dark:from-primary-900/20 dark:to-accent-900/20 mb-6">
-                                <div className="text-center">
-                                    <div className="text-sm text-slate-600 dark:text-slate-400 mb-1">Payment Amount</div>
-                                    <div className="text-3xl font-bold bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">
-                                        {formatStxAmount(amount)}
-                                    </div>
-                                    <div className="text-xs mt-2 text-slate-500 dark:text-slate-400 break-all">
-                                        Recipient: {recipient}
-                                    </div>
-                                </div>
+                            <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
+                                <p className="text-sm text-slate-500">Price</p>
+                                <p className="mt-1 text-3xl font-display text-slate-900">{formatStxAmount(amount)}</p>
+                                <p className="mt-3 text-xs text-slate-500 break-all">Paid to: {recipient}</p>
                             </div>
 
-                            {/* Error Message */}
                             {error && (
-                                <div className="mb-4 p-4 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg text-red-700 dark:text-red-300 text-sm">
+                                <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                                     {error}
-                                </div>
+                                </p>
                             )}
 
-                            {/* Actions */}
                             <div className="flex gap-3">
-                                <button
-                                    onClick={onClose}
-                                    disabled={isPaying}
-                                    className="btn-secondary flex-1"
-                                >
+                                <button onClick={onClose} disabled={isPaying} className="btn-secondary flex-1">
                                     Cancel
                                 </button>
-                                <button
-                                    onClick={handlePay}
-                                    disabled={isPaying}
-                                    className="btn-primary flex-1 relative"
-                                >
-                                    {isPaying ? (
-                                        <span className="flex items-center justify-center gap-2">
-                                            <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            Processing...
-                                        </span>
-                                    ) : (
-                                        'Pay with Wallet'
-                                    )}
+                                <button onClick={handlePay} disabled={isPaying} className="btn-primary flex-1">
+                                    {isPaying ? 'Opening wallet...' : 'Pay with wallet'}
                                 </button>
                             </div>
-
-                            <p className="text-xs text-center text-slate-500 dark:text-slate-400 mt-4">
-                                Your wallet will open to confirm the transaction
-                            </p>
                         </motion.div>
                     </div>
                 </>

@@ -1,27 +1,38 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/hooks/useAuth';
-import { apiClient } from '@/lib/api';
-import type { Book } from '@stackpad/shared';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
-import { WalletConnect } from '@/components/WalletConnect';
+import type { Book } from '@stackpad/shared';
 import { formatStxAmount } from '@stackpad/x402-client';
+import { useAuth } from '@/hooks/useAuth';
+import { apiClient } from '@/lib/api';
+import { WalletConnect } from '@/components/WalletConnect';
+
+function shortAddress(address?: string) {
+    if (!address) {
+        return 'Unknown author';
+    }
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
 export default function LibraryPage() {
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, connectWallet } = useAuth();
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (isAuthenticated) {
-            loadBooks();
+        if (!isAuthenticated) {
+            setLoading(false);
+            return;
         }
+
+        void loadBooks();
     }, [isAuthenticated]);
 
-    const loadBooks = async () => {
+    async function loadBooks() {
+        setLoading(true);
         try {
             const booksData = await apiClient.getBooks();
             setBooks(booksData);
@@ -30,127 +41,120 @@ export default function LibraryPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }
 
     if (!isAuthenticated) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-4">Please connect your wallet</h1>
-                    <Link href="/" className="btn-primary">
-                        Go to Home
-                    </Link>
-                </div>
+            <div className="app-shell">
+                <header className="topbar">
+                    <div className="layout-wrap flex h-20 items-center justify-between">
+                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    </div>
+                </header>
+                <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
+                    <div className="surface w-full max-w-xl p-10 text-center md:p-12">
+                        <h1 className="font-display text-4xl text-slate-900">Connect to open your library</h1>
+                        <p className="mt-5 text-lg leading-8 text-slate-600">
+                            Stackpad uses your wallet address to request protected pages and verify x402 unlocks.
+                        </p>
+                        <div className="mt-10 flex justify-center">
+                            <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
+                        </div>
+                    </div>
+                </main>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-indigo-950">
-            {/* Header */}
-            <header className="glass sticky top-0 z-10 border-b border-white/20">
-                <div className="container mx-auto px-4 py-4">
-                    <div className="flex justify-between items-center">
-                        <Link href="/" className="text-2xl font-display font-bold bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">
-                            Stackpad
-                        </Link>
-                        <div className="flex items-center gap-4">
-                            <Link href="/author" className="btn-secondary text-sm">
-                                Author Dashboard
-                            </Link>
-                            <WalletConnect />
-                        </div>
+        <div className="app-shell">
+            <header className="topbar">
+                <div className="layout-wrap flex h-20 items-center justify-between">
+                    <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    <div className="flex items-center gap-3">
+                        <Link href="/author" className="btn-secondary">Author</Link>
+                        <WalletConnect />
                     </div>
                 </div>
             </header>
 
-            {/* Main Content */}
-            <main className="container mx-auto px-4 py-12">
+            <main className="layout-wrap py-14 md:py-20">
                 <motion.div
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
+                    transition={{ duration: 0.35 }}
+                    className="mb-12 md:mb-16"
                 >
-                    <h1 className="text-4xl font-display font-bold mb-8 text-slate-900 dark:text-white">
-                        📚 Your Library
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Library</p>
+                    <h1 className="mt-5 max-w-3xl font-display text-5xl leading-tight text-slate-900 md:text-6xl">
+                        Pick a title and continue where you left off.
                     </h1>
-
-                    {loading ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                            {[...Array(8)].map((_, i) => (
-                                <div key={i} className="card h-96 animate-pulse">
-                                    <div className="bg-slate-200 dark:bg-slate-700 h-64 rounded-lg mb-4"></div>
-                                    <div className="bg-slate-200 dark:bg-slate-700 h-6 rounded mb-2"></div>
-                                    <div className="bg-slate-200 dark:bg-slate-700 h-4 rounded w-2/3"></div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : books.length === 0 ? (
-                        <div className="card text-center py-20">
-                            <div className="text-6xl mb-4">📖</div>
-                            <h2 className="text-2xl font-bold mb-2">No books available yet</h2>
-                            <p className="text-slate-600 dark:text-slate-300 mb-6">
-                                Check back soon for new releases or become an author!
-                            </p>
-                            <Link href="/author" className="btn-primary inline-block">
-                                Become an Author
-                            </Link>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                            {books.map((book, index) => (
-                                <motion.div
-                                    key={book.id}
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.4, delay: index * 0.05 }}
-                                >
-                                    <Link href={`/reader/${book.id}`}>
-                                        <div className="card group hover:shadow-2xl transition-all duration-300 hover:scale-105 cursor-pointer h-full">
-                                            {/* Cover Image */}
-                                            <div className="relative h-64 rounded-lg overflow-hidden mb-4 bg-gradient-to-br from-primary-100 to-accent-100 dark:from-primary-900 dark:to-accent-900">
-                                                {book.coverImageUrl ? (
-                                                    <Image
-                                                        src={book.coverImageUrl}
-                                                        alt={book.title}
-                                                        fill
-                                                        unoptimized
-                                                        className="object-cover"
-                                                    />
-                                                ) : (
-                                                    <div className="flex items-center justify-center h-full text-6xl">
-                                                        📖
-                                                    </div>
-                                                )}
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-4">
-                                                    <span className="text-white font-semibold">Read Now →</span>
-                                                </div>
-                                            </div>
-
-                                            {/* Book Info */}
-                                            <h3 className="text-lg font-bold mb-2 line-clamp-2 text-slate-900 dark:text-white">
-                                                {book.title}
-                                            </h3>
-                                            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-                                                By {book.authorAddress ? `${book.authorAddress.slice(0, 6)}...${book.authorAddress.slice(-4)}` : 'Unknown Author'}
-                                            </p>
-
-                                            {/* Pricing */}
-                                            <div className="flex justify-between items-center text-sm">
-                                                <span className="text-slate-600 dark:text-slate-300">
-                                                    {book.totalPages} pages
-                                                </span>
-                                                <span className="font-semibold text-primary-600 dark:text-primary-400">
-                                                    {formatStxAmount(book.pagePrice)}/page
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </Link>
-                                </motion.div>
-                            ))}
-                        </div>
-                    )}
+                    <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
+                        Each book includes transparent page pricing and direct author payout details before unlock.
+                    </p>
                 </motion.div>
+
+                {loading ? (
+                    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {Array.from({ length: 8 }).map((_, index) => (
+                            <div key={index} className="card animate-pulse">
+                                <div className="h-64 rounded-xl bg-slate-100" />
+                                <div className="mt-6 h-6 w-3/4 rounded bg-slate-100" />
+                                <div className="mt-3 h-4 w-1/2 rounded bg-slate-100" />
+                                <div className="mt-6 h-4 w-full rounded bg-slate-100" />
+                            </div>
+                        ))}
+                    </div>
+                ) : books.length === 0 ? (
+                    <div className="surface p-12 text-center md:p-16">
+                        <h2 className="font-display text-4xl text-slate-900">No books yet</h2>
+                        <p className="mx-auto mt-5 max-w-xl text-lg leading-8 text-slate-600">
+                            Publish your first title from the author view to start testing pay-per-page access.
+                        </p>
+                        <div className="mt-9">
+                            <Link href="/author" className="btn-primary">Open author view</Link>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {books.map((book, index) => (
+                            <motion.div
+                                key={book.id}
+                                initial={{ opacity: 0, y: 14 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.32, delay: index * 0.04 }}
+                            >
+                                <Link href={`/reader/${book.id}`} className="group block h-full">
+                                    <article className="card h-full transition-shadow duration-200 group-hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                                        <div className="relative h-64 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                                            {book.coverImageUrl ? (
+                                                <Image
+                                                    src={book.coverImageUrl}
+                                                    alt={book.title}
+                                                    fill
+                                                    unoptimized
+                                                    className="object-cover transition duration-500 group-hover:scale-[1.02]"
+                                                />
+                                            ) : (
+                                                <div className="flex h-full items-center justify-center px-6 text-center text-sm leading-6 text-slate-500">
+                                                    No cover image
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <h3 className="mt-6 font-display text-2xl leading-tight text-slate-900 line-clamp-2">{book.title}</h3>
+                                        <p className="mt-2 text-sm tracking-wide text-slate-500">{shortAddress(book.authorAddress)}</p>
+
+                                        <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4 text-sm">
+                                            <span className="text-slate-500">{book.totalPages} pages</span>
+                                            <span className="font-medium text-[hsl(var(--accent))]">{formatStxAmount(book.pagePrice)}/page</span>
+                                        </div>
+                                    </article>
+                                </Link>
+                            </motion.div>
+                        ))}
+                    </div>
+                )}
             </main>
         </div>
     );

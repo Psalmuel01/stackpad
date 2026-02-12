@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { motion, AnimatePresence, PanInfo } from 'framer-motion';
+import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import type { Book } from '@stackpad/shared';
 import {
     encodeBase64,
@@ -35,7 +35,8 @@ interface PendingPayment extends PaymentProofData {
 export default function ReaderPage() {
     const params = useParams();
     const bookId = parseInt(params.bookId as string, 10);
-    const { isAuthenticated, userAddress } = useAuth();
+
+    const { isAuthenticated, userAddress, connectWallet } = useAuth();
 
     const [book, setBook] = useState<Book | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -216,197 +217,169 @@ export default function ReaderPage() {
 
     if (!isAuthenticated) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-4">Please connect your wallet</h1>
-                    <Link href="/" className="btn-primary">
-                        Go to Home
-                    </Link>
-                </div>
+            <div className="app-shell">
+                <header className="topbar">
+                    <div className="layout-wrap flex h-20 items-center justify-between">
+                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    </div>
+                </header>
+                <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
+                    <div className="surface w-full max-w-xl p-10 text-center md:p-12">
+                        <h1 className="font-display text-4xl text-slate-900">Connect to read</h1>
+                        <p className="mt-5 text-lg leading-8 text-slate-600">
+                            A connected wallet is required to request locked pages and submit x402 payment proof.
+                        </p>
+                        <div className="mt-10 flex justify-center">
+                            <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
+                        </div>
+                    </div>
+                </main>
             </div>
         );
     }
 
     if (!book && readerState === 'error') {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold mb-4">Book not found</h1>
-                    <Link href="/library" className="btn-primary">
-                        Back to Library
-                    </Link>
-                </div>
+            <div className="app-shell">
+                <main className="layout-wrap flex min-h-screen items-center justify-center py-16">
+                    <div className="surface w-full max-w-xl p-10 text-center md:p-12">
+                        <h1 className="font-display text-4xl text-slate-900">Book not found</h1>
+                        <p className="mt-5 text-lg leading-8 text-slate-600">This book could not be loaded.</p>
+                        <div className="mt-10">
+                            <Link href="/library" className="btn-primary">Return to library</Link>
+                        </div>
+                    </div>
+                </main>
             </div>
         );
     }
 
+    const progress = book ? (currentPage / book.totalPages) * 100 : 0;
+
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-indigo-950">
-            <header className="glass sticky top-0 z-10 border-b border-white/20">
-                <div className="container mx-auto px-4 py-3">
-                    <div className="flex justify-between items-center">
-                        <Link href="/library" className="text-slate-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-primary-400 flex items-center gap-2">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
-                            Back to Library
-                        </Link>
-                        <div className="flex items-center gap-4">
-                            <div className="text-sm text-slate-600 dark:text-slate-300">
-                                Page {currentPage} / {book?.totalPages || '...'}
-                            </div>
-                            <WalletConnect />
-                        </div>
+        <div className="app-shell">
+            <header className="topbar">
+                <div className="layout-wrap flex h-20 items-center justify-between gap-4">
+                    <Link href="/library" className="text-sm text-slate-600 transition-colors hover:text-slate-900">Library</Link>
+                    <div className="min-w-0 flex-1 px-2 text-center">
+                        <p className="truncate font-display text-2xl text-slate-900 md:text-3xl">{book?.title || 'Loading...'}</p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                            Page {currentPage}{book ? ` of ${book.totalPages}` : ''}
+                        </p>
+                    </div>
+                    <WalletConnect />
+                </div>
+                <div className="layout-wrap pb-3">
+                    <div className="h-[3px] w-full overflow-hidden rounded-full bg-slate-200">
+                        <div
+                            className="h-full rounded-full bg-[hsl(var(--accent))] transition-all duration-300"
+                            style={{ width: `${progress}%` }}
+                        />
                     </div>
                 </div>
             </header>
 
-            <main className="container mx-auto px-4 py-8">
-                <div className="max-w-4xl mx-auto">
-                    {book && (
-                        <div className="text-center mb-8">
-                            <h1 className="text-3xl font-display font-bold text-slate-900 dark:text-white mb-2">
-                                {book.title}
-                            </h1>
-                            <div className="w-32 h-1 bg-gradient-to-r from-primary-500 to-accent-500 mx-auto rounded-full" />
-                        </div>
-                    )}
+            <main className="layout-wrap py-8 md:py-10">
+                <motion.section
+                    drag="x"
+                    dragConstraints={{ left: 0, right: 0 }}
+                    dragElastic={0.16}
+                    onDragEnd={(_, info) => handleDragEnd(info)}
+                    className="surface relative min-h-[68vh] overflow-hidden px-7 py-10 md:px-16 md:py-14"
+                >
+                    <AnimatePresence mode="wait">
+                        {readerState === 'loading' || readerState === 'idle' ? (
+                            <motion.div
+                                key="loading"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                className="flex min-h-[50vh] items-center justify-center"
+                            >
+                                <div className="text-center">
+                                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-b-[hsl(var(--accent))]" />
+                                    <p className="mt-4 text-sm text-slate-500">Loading page...</p>
+                                </div>
+                            </motion.div>
+                        ) : (
+                            <motion.div
+                                key={`page-${currentPage}-${readerState}`}
+                                initial={{ opacity: 0, x: 16 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -16 }}
+                                transition={{ duration: 0.28, ease: 'easeOut' }}
+                                className="relative"
+                            >
+                                <article className="reader-copy min-h-[56vh] whitespace-pre-wrap">
+                                    {readerState === 'error' ? statusMessage || pageContent : pageContent}
+                                </article>
 
-                    {book && (
-                        <div className="mb-6">
-                            <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-primary-500 to-accent-500 transition-all duration-300"
-                                    style={{ width: `${(currentPage / book.totalPages) * 100}%` }}
-                                />
-                            </div>
-                        </div>
-                    )}
+                                {isDimmed && (
+                                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[rgba(248,246,241,0.76)] px-4 py-6">
+                                        <div className="absolute inset-0 rounded-2xl backdrop-blur-[1.5px]" />
+                                        <div className="surface relative z-10 w-full max-w-sm p-6 text-center md:p-8">
+                                            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Locked page</p>
+                                            <h2 className="mt-3 font-display text-3xl text-slate-900">
+                                                {readerState === 'verifying' ? 'Verifying payment' : `Unlock page ${currentPage}`}
+                                            </h2>
+                                            <p className="mt-4 text-sm leading-7 text-slate-600">
+                                                {paymentInstructions
+                                                    ? `Price: ${formatStxAmount(paymentInstructions.amount)} paid to ${paymentInstructions.recipient}.`
+                                                    : 'Payment details unavailable. Retry the request.'}
+                                            </p>
 
-                    <motion.div
-                        drag="x"
-                        dragConstraints={{ left: 0, right: 0 }}
-                        dragElastic={0.2}
-                        onDragEnd={(_, info) => handleDragEnd(info)}
-                        className="card min-h-[600px] relative overflow-hidden"
-                    >
-                        <AnimatePresence mode="wait">
-                            {readerState === 'loading' || readerState === 'idle' ? (
-                                <motion.div
-                                    key="loading"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    className="flex items-center justify-center h-full min-h-[400px]"
-                                >
-                                    <div className="text-center">
-                                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4" />
-                                        <p className="text-slate-600 dark:text-slate-300">Loading page...</p>
+                                            {statusMessage && (
+                                                <p className="mt-3 text-sm leading-6 text-slate-500">{statusMessage}</p>
+                                            )}
+
+                                            <div className="mt-6">
+                                                {readerState === 'verifying' ? (
+                                                    <button
+                                                        onClick={() => {
+                                                            if (pendingPayment) {
+                                                                void loadPageContent(currentPage, pendingPayment, MAX_VERIFICATION_RETRIES);
+                                                            }
+                                                        }}
+                                                        className="btn-secondary w-full"
+                                                    >
+                                                        Retry verification
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setShowPaymentModal(true)}
+                                                        disabled={!paymentInstructions}
+                                                        className="btn-primary w-full"
+                                                    >
+                                                        Open payment
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
-                                </motion.div>
-                            ) : (
-                                <motion.div
-                                    key={`page-${currentPage}-${readerState}`}
-                                    initial={{ opacity: 0, x: 20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: -20 }}
-                                    transition={{ duration: 0.3 }}
-                                    className="prose dark:prose-invert max-w-none relative"
-                                >
-                                    {isDimmed ? (
-                                        <div className="relative">
-                                            <div className="filter blur-sm select-none opacity-50 pointer-events-none" aria-hidden="true">
-                                                <h3>Locked Preview</h3>
-                                                <p>
-                                                    This page is protected by x402 payment gating. Unlock access to continue reading.
-                                                </p>
-                                                <p>
-                                                    Payment is sent directly to the author address configured for this book.
-                                                </p>
-                                            </div>
+                                )}
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
+                </motion.section>
 
-                                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 text-center">
-                                                <div className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/20 dark:border-slate-700/50 max-w-sm mx-auto">
-                                                    <div className="w-16 h-16 bg-gradient-to-br from-primary-100 to-accent-100 dark:from-primary-900/50 dark:to-accent-900/50 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                                                        <span className="text-3xl">🔒</span>
-                                                    </div>
+                <div className="mt-6 flex items-center justify-between gap-3">
+                    <button
+                        onClick={goToPrevPage}
+                        disabled={currentPage === 1}
+                        className="btn-secondary min-w-[8.5rem] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Previous
+                    </button>
 
-                                                    <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                                                        {readerState === 'verifying' ? 'Verifying Payment' : 'Premium Content'}
-                                                    </h3>
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Swipe horizontally</p>
 
-                                                    <p className="text-slate-600 dark:text-slate-300 mb-4 leading-relaxed">
-                                                        {paymentInstructions
-                                                            ? `Unlock this page for ${formatStxAmount(paymentInstructions.amount)}`
-                                                            : 'Payment details unavailable. Retry the request.'}
-                                                    </p>
-
-                                                    {statusMessage && (
-                                                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-                                                            {statusMessage}
-                                                        </p>
-                                                    )}
-
-                                                    {readerState === 'verifying' ? (
-                                                        <button
-                                                            onClick={() => {
-                                                                if (pendingPayment) {
-                                                                    void loadPageContent(currentPage, pendingPayment, MAX_VERIFICATION_RETRIES);
-                                                                }
-                                                            }}
-                                                            className="btn-secondary w-full"
-                                                        >
-                                                            Retry Verification
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => setShowPaymentModal(true)}
-                                                            className="btn-primary w-full"
-                                                            disabled={!paymentInstructions}
-                                                        >
-                                                            Unlock Page
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="min-h-[60vh] text-lg leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
-                                            {readerState === 'error' ? statusMessage || pageContent : pageContent}
-                                        </div>
-                                    )}
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-                    </motion.div>
-
-                    <div className="flex justify-between items-center mt-6">
-                        <button
-                            onClick={goToPrevPage}
-                            disabled={currentPage === 1}
-                            className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
-                            Previous
-                        </button>
-
-                        <div className="text-sm text-slate-600 dark:text-slate-400">
-                            Swipe to navigate
-                        </div>
-
-                        <button
-                            onClick={goToNextPage}
-                            disabled={!book || currentPage >= book.totalPages}
-                            className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            Next
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                        </button>
-                    </div>
+                    <button
+                        onClick={goToNextPage}
+                        disabled={!book || currentPage >= book.totalPages}
+                        className="btn-secondary min-w-[8.5rem] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Next
+                    </button>
                 </div>
             </main>
 
