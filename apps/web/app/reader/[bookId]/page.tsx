@@ -9,6 +9,7 @@ import { formatStxAmount } from '@stackpad/x402-client';
 import { apiClient, type X402Diagnostics } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 type ReaderState = 'idle' | 'loading' | 'locked' | 'error' | 'ready';
 
@@ -250,6 +251,7 @@ export default function ReaderPage() {
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
                         <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <ThemeToggle />
                     </div>
                 </header>
                 <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
@@ -296,6 +298,7 @@ export default function ReaderPage() {
                             Page {currentPage}{book ? ` of ${book.totalPages}` : ''}
                         </p>
                     </div>
+                    <ThemeToggle />
                     <WalletConnect />
                 </div>
                 <div className="layout-wrap pb-3">

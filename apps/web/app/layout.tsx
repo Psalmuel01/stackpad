@@ -15,8 +15,26 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const themeBootstrap = `
+    (function () {
+      try {
+        var key = 'stackpad-theme';
+        var stored = localStorage.getItem(key);
+        var theme = stored === 'dark' || stored === 'light'
+          ? stored
+          : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  `;
+
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body className="font-sans">
         <AuthProvider>
           {children}

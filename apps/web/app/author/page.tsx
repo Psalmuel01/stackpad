@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const CHARS_PER_PAGE = 1500;
 const PDFJS_CDN_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
@@ -306,6 +307,7 @@ export default function AuthorPage() {
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
                         <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <ThemeToggle />
                     </div>
                 </header>
                 <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
@@ -330,6 +332,7 @@ export default function AuthorPage() {
                     <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
                     <div className="flex items-center gap-3">
                         <Link href="/library" className="btn-secondary">Library</Link>
+                        <ThemeToggle />
                         <WalletConnect />
                     </div>
                 </div>

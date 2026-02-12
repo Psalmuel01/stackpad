@@ -9,6 +9,7 @@ import { formatStxAmount } from '@stackpad/x402-client';
 import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const DEFAULT_COVER_IMAGE = '/default-cover.svg';
 
@@ -51,6 +52,7 @@ export default function LibraryPage() {
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
                         <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <ThemeToggle />
                     </div>
                 </header>
                 <main className="layout-wrap flex min-h-[72vh] items-center justify-center py-16">
@@ -75,6 +77,7 @@ export default function LibraryPage() {
                     <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
                     <div className="flex items-center gap-3">
                         <Link href="/author" className="btn-secondary">Author</Link>
+                        <ThemeToggle />
                         <WalletConnect />
                     </div>
                 </div>

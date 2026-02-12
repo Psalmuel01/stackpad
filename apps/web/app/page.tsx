@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 const fadeUp = {
     initial: { opacity: 0, y: 14 },
@@ -29,6 +30,7 @@ export default function Home() {
                         <Link href="/author" className="btn-secondary">
                             Author
                         </Link>
+                        <ThemeToggle />
                         <WalletConnect />
                     </div>
                 </div>
