@@ -10,6 +10,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
 
+const DEFAULT_COVER_IMAGE = '/default-cover.svg';
+
 function shortAddress(address?: string) {
     if (!address) {
         return 'Unknown author';
@@ -127,19 +129,13 @@ export default function LibraryPage() {
                                 <Link href={`/reader/${book.id}`} className="group block h-full">
                                     <article className="card h-full transition-shadow duration-200 group-hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
                                         <div className="relative h-64 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                                            {book.coverImageUrl ? (
-                                                <Image
-                                                    src={book.coverImageUrl}
-                                                    alt={book.title}
-                                                    fill
-                                                    unoptimized
-                                                    className="object-cover transition duration-500 group-hover:scale-[1.02]"
-                                                />
-                                            ) : (
-                                                <div className="flex h-full items-center justify-center px-6 text-center text-sm leading-6 text-slate-500">
-                                                    No cover image
-                                                </div>
-                                            )}
+                                            <Image
+                                                src={book.coverImageUrl || DEFAULT_COVER_IMAGE}
+                                                alt={book.title}
+                                                fill
+                                                unoptimized
+                                                className="object-cover transition duration-500 group-hover:scale-[1.02]"
+                                            />
                                         </div>
 
                                         <h3 className="mt-6 font-display text-2xl leading-tight text-slate-900 line-clamp-2">{book.title}</h3>
