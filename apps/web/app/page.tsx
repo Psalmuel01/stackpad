@@ -57,24 +57,24 @@ export default function Home() {
                         transition={{ duration: 0.45 }}
                         className="relative z-10 max-w-5xl"
                     >
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-As-You-Read</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-as-You-Read eBook Platform</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            The reading platform where each page unlocks with proof, not friction.
+                            A decentralized reading platform where readers pay per page or chapter.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
-                            Stackpad combines immersive reading UI with x402 payment gating on Stacks. Readers unlock only what
-                            they open. Authors receive transparent payout routing on every paid access event.
+                            Built on x402-stacks, Stackpad charges only when locked content is accessed. Readers pay for actual
+                            consumption, and authors are compensated fairly for what gets read.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
                                 <>
-                                    <Link href="/library" className="btn-primary">Open library</Link>
-                                    <Link href="/author" className="btn-secondary">Publish a book</Link>
+                                    <Link href="/library" className="btn-primary">Explore catalog</Link>
+                                    <Link href="/author" className="btn-secondary">Start publishing</Link>
                                 </>
                             ) : (
                                 <>
                                     <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
-                                    <Link href="/library" className="btn-secondary">Preview library</Link>
+                                    <Link href="/library" className="btn-secondary">Explore catalog</Link>
                                 </>
                             )}
                         </div>
@@ -85,18 +85,18 @@ export default function Home() {
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
                             {
-                                title: 'Wallet-native',
-                                detail: 'Reader identity comes directly from Stacks wallet addresses. No account silo.',
+                                title: 'Pay by consumption',
+                                detail: 'Unlock access page-by-page or chapter-by-chapter instead of paying for unread content.',
                                 icon: <WalletIcon />,
                             },
                             {
-                                title: 'HTTP 402 Flow',
-                                detail: 'Locked resources return standards-based payment requirements and settle with facilitator verification.',
+                                title: 'x402-stacks native',
+                                detail: 'HTTP 402 payment requirements and facilitator settlement power every locked request.',
                                 icon: <LockIcon />,
                             },
                             {
-                                title: 'Reader-first UX',
-                                detail: 'Immersive typography, swipe navigation, and compact unlock actions keep attention on content.',
+                                title: 'Fair author payouts',
+                                detail: 'Revenue aligns with real reading behavior, so compensation matches actual usage.',
                                 icon: <BookIcon />,
                             },
                         ].map((item) => (
@@ -116,18 +116,18 @@ export default function Home() {
                         <div className="mb-8">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow detail</p>
                             <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                                From page swipe to verified unlock in a clear sequence.
+                                How pay-as-you-read works across buyer, server, and facilitator.
                             </h2>
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             {[
-                                ['1', 'Reader requests page', 'The app asks backend for the selected page endpoint.'],
-                                ['2', 'Backend returns 402', 'If locked, response includes payment-required terms (amount, asset, payTo, network).'],
-                                ['3', 'Buyer signs payload', 'Strict x402 buyer adapter creates payment-signature from configured signer key.'],
-                                ['4', 'Server settles', 'Backend verifies and settles through facilitator with declared requirements.'],
-                                ['5', 'Resource returned', 'On success, content response includes payment-response settlement metadata.'],
-                                ['6', 'Entitlement recorded', 'Reader entitlement is logged for future access checks and chapter coverage.'],
+                                ['1', 'Reader requests premium access', 'The next locked page or chapter is requested from the API.'],
+                                ['2', 'Server returns HTTP 402', 'Payment terms include amount, asset, payTo, and network requirements.'],
+                                ['3', 'Buyer signs payment', 'The buyer adapter signs a payment payload for that exact unlock request.'],
+                                ['4', 'Facilitator verifies and settles', 'Payment is validated and settled before the resource is released.'],
+                                ['5', 'Content unlocks instantly', 'The paid page/chapter returns with payment-response metadata.'],
+                                ['6', 'Entitlement is recorded', 'Unlocked access is remembered so the reader can continue seamlessly.'],
                             ].map(([step, title, detail]) => (
                                 <article key={step} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                                     <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
@@ -147,8 +147,8 @@ export default function Home() {
                             </div>
                             <h3 className="font-display text-3xl text-slate-900">Reader experience</h3>
                             <p className="mt-4 text-base leading-8 text-slate-600">
-                                The interface stays minimal at every stage: focused reading typography, subtle dimming on locked
-                                pages, and one clear payment action. Diagnostics stay visible without crowding the flow.
+                                Read in a focused interface and only pay when you cross a locked boundary. No subscription
+                                overhead, no unnecessary checkout noise.
                             </p>
                         </motion.article>
 
@@ -156,10 +156,10 @@ export default function Home() {
                             <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
                                 <AuthorIcon />
                             </div>
-                            <h3 className="font-display text-3xl text-slate-900">Author controls</h3>
+                            <h3 className="font-display text-3xl text-slate-900">Publisher console</h3>
                             <p className="mt-4 text-base leading-8 text-slate-600">
-                                Upload text or PDF with page detection, set microSTX pricing, and publish instantly. The backend
-                                validates page structure and payout metadata before committing records to storage.
+                                Publish titles, set page/chapter pricing, and route payouts to your address. Every paid unlock is
+                                measurable, transparent, and tied to actual consumption.
                             </p>
                         </motion.article>
                     </div>
@@ -168,15 +168,15 @@ export default function Home() {
                 <section className="layout-wrap pb-26 md:pb-36">
                     <motion.div {...fadeUp} className="surface p-10 md:p-14">
                         <h4 className="max-w-2xl font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                            Start reading and verify every unlock path end-to-end.
+                            Monetize reading with precision, not guesswork.
                         </h4>
                         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                            Explore the library for live page gating or open author mode to publish test content with file-based
-                            page detection and pricing controls.
+                            Move from static pricing to usage-based access, where readers pay only for what they consume and
+                            authors earn from real engagement.
                         </p>
                         <div className="mt-10 flex flex-wrap gap-4">
-                            <Link href="/library" className="btn-primary">Enter library</Link>
-                            <Link href="/author" className="btn-secondary">Open author console</Link>
+                            <Link href="/library" className="btn-primary">Browse catalog</Link>
+                            <Link href="/author" className="btn-secondary">Open publisher console</Link>
                         </div>
                     </motion.div>
                 </section>
