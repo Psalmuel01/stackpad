@@ -189,7 +189,7 @@ async function handleV2Payment(
         paymentRequirements: context.v2Requirement,
     });
 
-    if (!facilitatorVerification.isValid && facilitatorVerification.invalidReason !== 'unexpected_verify_error') {
+    if (!facilitatorVerification.isValid) {
         await send402Response(res, context, {
             error: 'Payment verification failed',
             details: facilitatorVerification.invalidReason || 'facilitator_verify_failed',
