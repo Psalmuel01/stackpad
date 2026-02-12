@@ -141,6 +141,46 @@ class ApiClient {
             })),
         };
     }
+
+    async getAuthorBooks(authorAddress: string): Promise<Book[]> {
+        const response = await fetch(`${this.baseUrl}/api/author/books?address=${encodeURIComponent(authorAddress)}`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch author books');
+        }
+
+        const data = await response.json() as { books: Book[] };
+        return data.books;
+    }
+
+    async updateAuthorBook(
+        bookId: number,
+        authorAddress: string,
+        updates: {
+            title?: string;
+            coverImageUrl?: string | null;
+            pagePrice?: string;
+            chapterPrice?: string;
+            contractBookId?: number | null;
+        }
+    ): Promise<Book> {
+        const response = await fetch(`${this.baseUrl}/api/author/books/${bookId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                authorAddress,
+                ...updates,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to update book');
+        }
+
+        const data = await response.json() as { book: Book };
+        return data.book;
+    }
 }
 
 export const apiClient = new ApiClient(API_URL);

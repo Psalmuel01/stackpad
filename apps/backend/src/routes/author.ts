@@ -97,6 +97,159 @@ router.post('/upload', async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * GET /api/author/books
+ * List books for a specific author
+ */
+router.get('/books', async (req: Request, res: Response) => {
+    try {
+        const authorAddress = req.query.address as string;
+        if (!authorAddress) {
+            res.status(400).json({ error: 'Author address required' });
+            return;
+        }
+
+        const result = await pool.query(
+            `SELECT
+                id,
+                author_address as "authorAddress",
+                title,
+                cover_image_url as "coverImageUrl",
+                total_pages as "totalPages",
+                total_chapters as "totalChapters",
+                page_price as "pagePrice",
+                chapter_price as "chapterPrice",
+                contract_book_id as "contractBookId",
+                created_at as "createdAt"
+             FROM books
+             WHERE author_address = $1
+             ORDER BY created_at DESC`,
+            [authorAddress]
+        );
+
+        res.json({
+            success: true,
+            books: result.rows,
+        });
+    } catch (error) {
+        console.error('Error fetching author books:', error);
+        res.status(500).json({ error: 'Failed to fetch author books' });
+    }
+});
+
+/**
+ * PATCH /api/author/books/:bookId
+ * Update author-owned book metadata/pricing
+ */
+router.patch('/books/:bookId', async (req: Request, res: Response) => {
+    try {
+        const bookId = Number.parseInt(req.params.bookId, 10);
+        if (!Number.isInteger(bookId) || bookId < 1) {
+            res.status(400).json({ error: 'Invalid book ID' });
+            return;
+        }
+
+        const authorAddress = typeof req.body.authorAddress === 'string' ? req.body.authorAddress.trim() : '';
+        if (!authorAddress) {
+            res.status(400).json({ error: 'Author address required' });
+            return;
+        }
+
+        const updates: string[] = [];
+        const params: Array<string | number | null> = [];
+
+        if (req.body.title !== undefined) {
+            if (typeof req.body.title !== 'string' || !req.body.title.trim()) {
+                res.status(400).json({ error: 'Title must be a non-empty string' });
+                return;
+            }
+            params.push(req.body.title.trim());
+            updates.push(`title = $${params.length}`);
+        }
+
+        if (req.body.coverImageUrl !== undefined) {
+            const normalizedCover = normalizeCoverUpdate(req.body.coverImageUrl);
+            if (normalizedCover === undefined) {
+                res.status(400).json({ error: 'Invalid coverImageUrl value' });
+                return;
+            }
+            params.push(normalizedCover);
+            updates.push(`cover_image_url = $${params.length}`);
+        }
+
+        if (req.body.pagePrice !== undefined) {
+            const parsedPagePrice = toMicroStx(req.body.pagePrice);
+            if (parsedPagePrice === null) {
+                res.status(400).json({ error: 'pagePrice must be a non-negative integer (microSTX)' });
+                return;
+            }
+            params.push(parsedPagePrice.toString());
+            updates.push(`page_price = $${params.length}`);
+        }
+
+        if (req.body.chapterPrice !== undefined) {
+            const parsedChapterPrice = toMicroStx(req.body.chapterPrice);
+            if (parsedChapterPrice === null) {
+                res.status(400).json({ error: 'chapterPrice must be a non-negative integer (microSTX)' });
+                return;
+            }
+            params.push(parsedChapterPrice.toString());
+            updates.push(`chapter_price = $${params.length}`);
+        }
+
+        if (req.body.contractBookId !== undefined) {
+            const normalizedBookId = normalizeOptionalInteger(req.body.contractBookId);
+            if (
+                req.body.contractBookId !== null
+                && req.body.contractBookId !== ''
+                && normalizedBookId === null
+            ) {
+                res.status(400).json({ error: 'contractBookId must be a positive integer or null' });
+                return;
+            }
+            params.push(normalizedBookId);
+            updates.push(`contract_book_id = $${params.length}`);
+        }
+
+        if (updates.length === 0) {
+            res.status(400).json({ error: 'No updates provided' });
+            return;
+        }
+
+        params.push(bookId, authorAddress);
+        const result = await pool.query(
+            `UPDATE books
+             SET ${updates.join(', ')}
+             WHERE id = $${params.length - 1} AND author_address = $${params.length}
+             RETURNING
+                id,
+                author_address as "authorAddress",
+                title,
+                cover_image_url as "coverImageUrl",
+                total_pages as "totalPages",
+                total_chapters as "totalChapters",
+                page_price as "pagePrice",
+                chapter_price as "chapterPrice",
+                contract_book_id as "contractBookId",
+                created_at as "createdAt"`,
+            params
+        );
+
+        if (result.rows.length === 0) {
+            res.status(404).json({ error: 'Book not found for this author' });
+            return;
+        }
+
+        res.json({
+            success: true,
+            book: result.rows[0],
+        });
+    } catch (error) {
+        console.error('Error updating author book:', error);
+        res.status(500).json({ error: 'Failed to update book' });
+    }
+});
+
 function normalizePages(pages: unknown[]): {
     valid: true;
     pages: Array<{ pageNumber: number; chapterNumber?: number; content: string }>;
@@ -203,6 +356,24 @@ function normalizeCoverUrl(value: unknown): string | null {
     } catch {
         return null;
     }
+}
+
+function normalizeCoverUpdate(value: unknown): string | null | undefined {
+    if (value === null || value === '') {
+        return null;
+    }
+
+    if (typeof value !== 'string') {
+        return undefined;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const normalized = normalizeCoverUrl(trimmed);
+    return normalized ?? undefined;
 }
 
 function getChapterCount(pages: Array<{ chapterNumber?: number }>): number {
