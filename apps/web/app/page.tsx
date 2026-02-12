@@ -132,7 +132,7 @@ export default function Home() {
                                 <article key={step} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                                     <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
                                     <h3 className="mt-2 text-lg font-medium text-slate-900">{title}</h3>
-                                    <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
+                                    <p className="mt-2 text-sm leading-6 text-slate-800">{detail}</p>
                                 </article>
                             ))}
                         </div>

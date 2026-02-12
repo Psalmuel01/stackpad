@@ -96,7 +96,7 @@ export async function verifyPayment(
         }
 
         // Parse memo to extract book/page/chapter info
-        const normalizedMemo = memo ? memo.replace(/\u0000/g, '').trim() : '';
+        const normalizedMemo = normalizeTransferMemo(memo);
         const parsedMemo = normalizedMemo ? parsePaymentMemo(normalizedMemo) : null;
 
         if (!parsedMemo || parsedMemo.bookId !== expectedBookId) {
@@ -178,6 +178,43 @@ export async function verifyPayment(
             valid: false,
             error: 'Failed to verify payment: ' + (error instanceof Error ? error.message : 'Unknown error'),
         };
+    }
+}
+
+function normalizeTransferMemo(rawMemo?: string): string {
+    if (!rawMemo) {
+        return '';
+    }
+
+    const trimmed = rawMemo.trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    const decodedHex = decodeHexMemo(trimmed);
+    const candidate = decodedHex ?? trimmed;
+    const cleaned = candidate.replace(/\u0000/g, '').trim();
+
+    if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+        return cleaned.slice(1, -1).trim();
+    }
+
+    return cleaned;
+}
+
+function decodeHexMemo(value: string): string | null {
+    const withoutPrefix = value.startsWith('0x') || value.startsWith('0X')
+        ? value.slice(2)
+        : value;
+
+    if (!withoutPrefix || withoutPrefix.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(withoutPrefix)) {
+        return null;
+    }
+
+    try {
+        return Buffer.from(withoutPrefix, 'hex').toString('utf-8');
+    } catch {
+        return null;
     }
 }
 

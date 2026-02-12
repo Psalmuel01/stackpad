@@ -1,110 +1,83 @@
-# 📚 Pay-As-You-Read# Stackpad
+# Stackpad
 
-A decentralized reading platform where users pay per page using Stacks (STX) tokens. Built with Next.js, Express, and Clarinet.ocol.
+Pay-as-you-read publishing on Stacks with x402-style HTTP 402 payment gating.
 
-## Features
+Readers unlock only the content they cross into. Authors receive STX directly to their payout address.
 
-- 💰 **Pay-per-page/chapter**: Granular access control with blockchain-verified payments
-- 📱 **Swipeable UI**: Mobile-friendly horizontal swipe navigation
-- 🔒 **Payment gating**: HTTP 402 responses trigger seamless wallet payments
-- ⛓️ **Smart contract entitlements**: On-chain verification of access rights
-- 👤 **Author dashboard**: Upload content, set pricing, track earnings
+## Current Payment Architecture
+
+1. Reader requests locked content.
+2. Backend returns `402 Payment Required` with `payment-required` header (v2 format).
+3. Reader signs and sends STX transfer from their own wallet to the author `payTo` address.
+4. Reader retries with tx proof (`x-payment-proof`/`x-payment-response`).
+5. Backend verifies tx on Stacks (recipient, amount, memo binding), records entitlement, serves content.
+
+Notes:
+- No server-side buyer private key is required.
+- Facilitator-backed strict `payment-signature` flow is supported in backend middleware for compatible machine buyers.
+- Smart contracts in `contracts/` are optional for this app version and are not required to run locally.
 
 ## Tech Stack
 
-- **Frontend**: Next.js, React, TailwindCSS, Framer Motion
-- **Backend**: Node.js, Express, PostgreSQL
-- **Smart Contracts**: Clarity (Stacks blockchain)
-- **Payment Protocol**: x402 with STX token payments
-- **Wallet Integration**: Hiro/Leather wallets via @stacks/connect
+- Frontend: Next.js, React, TailwindCSS, Framer Motion
+- Backend: Node.js, Express, PostgreSQL
+- Chain verification: Stacks API (`@stacks/blockchain-api-client`)
+- Payment protocol surface: x402-stacks v2 semantics
 
 ## Project Structure
 
-```
+```text
 /Stackpad
   /apps
-    /web              # Next.js frontend
-    /backend          # Node.js API server
-  /contracts          # Stacks Clarity contracts
+    /web
+    /backend
+  /contracts
   /packages
-    /shared           # Shared TypeScript types
-    /x402-client      # x402 payment client utilities
+    /shared
+    /x402-client
 ```
 
-## Getting Started
+## Run Locally
 
 ### Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 20+
+- npm
 - PostgreSQL 14+
-- [Clarinet](https://github.com/hirosystems/clarinet) for Stacks contract development
-- Hiro or Leather wallet browser extension
+- Hiro or Leather wallet extension (fund with testnet STX for testnet usage)
 
-### Installation
+### Setup
 
-1. Clone the repository and install dependencies:
 ```bash
 npm install
-```
-
-2. Setup environment variables:
-```bash
-# Backend (.env in apps/backend)
 cp apps/backend/.env.example apps/backend/.env
-
-# Frontend (.env.local in apps/web)
 cp apps/web/.env.example apps/web/.env.local
-```
-
-3. Start PostgreSQL and create database:
-```bash
 createdb ebook_platform
+npm run migrate -w apps/backend
 ```
 
-4. Run database migrations:
-```bash
-cd apps/backend
-npm run migrate
-```
+### Start
 
-5. Deploy contracts to testnet:
-```bash
-cd contracts
-clarinet deployments apply --devnet
-```
-
-### Development
-
-Start all services:
 ```bash
 npm run dev
 ```
 
-Or start individually:
-```bash
-# Frontend (http://localhost:3000)
-npm run web
+Services:
+- Web: http://localhost:3000
+- Backend: http://localhost:3001
 
-# Backend (http://localhost:3001)
-npm run backend
-```
+## Environment Variables
 
-## Testing
+Backend (`apps/backend/.env`):
+- `PORT`
+- `DATABASE_URL`
+- `STACKS_NETWORK` (`testnet` or `mainnet`)
+- `STACKS_API_URL`
+- `FACILITATOR_URL` (used by strict `payment-signature` middleware path)
 
-Run all tests:
-```bash
-npm test
-```
-
-Test contracts:
-```bash
-cd contracts
-clarinet test
-```
-
-## Documentation
-
-See [implementation_plan.md](./docs/implementation_plan.md) for detailed architecture and verification plan.
+Frontend (`apps/web/.env.local`):
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_STACKS_NETWORK`
 
 ## License
 

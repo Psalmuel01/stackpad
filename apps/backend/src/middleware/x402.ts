@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { paymentMiddleware, getPayment, networkToCAIP2, type PaymentRequirementsV2 } from 'x402-stacks';
-import { recordPayment, hasExistingPayment } from '../services/payment-verifier';
+import { recordPayment, hasExistingPayment, verifyPayment } from '../services/payment-verifier';
 import pool from '../db/client';
 import { createPaymentMemo } from '@stackpad/x402-client';
 
@@ -43,6 +43,62 @@ export async function x402PaymentGate(
             return;
         }
 
+        const txHashProof = extractPaymentProofTxHash(req);
+        if (txHashProof) {
+            const verification = await verifyPayment(
+                txHashProof,
+                context.bookId,
+                context.pageNumber,
+                context.chapterNumber,
+                context.authorAddress,
+                context.expectedAmount
+            );
+
+            if (verification.valid) {
+                const requestedReader = req.readerAddress;
+                const verifiedReader = verification.readerAddress;
+
+                if (requestedReader && verifiedReader && requestedReader !== verifiedReader) {
+                    sendPaymentRequiredWithError(
+                        req,
+                        res,
+                        context,
+                        'Payment sender does not match the requested reader address'
+                    );
+                    return;
+                }
+
+                const entitlementReader = verifiedReader || requestedReader;
+                if (!entitlementReader) {
+                    sendPaymentRequiredWithError(req, res, context, 'Unable to determine payment sender');
+                    return;
+                }
+
+                req.readerAddress = entitlementReader;
+                await recordPayment(
+                    txHashProof,
+                    entitlementReader,
+                    context.bookId,
+                    verification.amount ?? context.expectedAmount,
+                    context.pageNumber,
+                    context.chapterNumber
+                );
+
+                res.setHeader('payment-response', Buffer.from(JSON.stringify({
+                    success: true,
+                    transaction: txHashProof,
+                    payer: verifiedReader || entitlementReader,
+                    network: context.v2Requirement.network,
+                })).toString('base64'));
+
+                next();
+                return;
+            }
+
+            sendPaymentRequiredWithError(req, res, context, verification.error || 'Payment proof is invalid');
+            return;
+        }
+
         if (req.readerAddress) {
             const alreadyPaid = await hasExistingPayment(
                 req.readerAddress,
@@ -76,23 +132,38 @@ export async function x402PaymentGate(
             const payer = settledPayment?.payer;
             const transaction = settledPayment?.transaction;
 
-            if (!req.readerAddress && payer) {
-                req.readerAddress = payer;
-            }
-
-            const entitlementReader = requestedReader || req.readerAddress || payer;
-
-            if (entitlementReader && transaction) {
-                await recordPayment(
-                    transaction,
-                    entitlementReader,
-                    context.bookId,
-                    context.expectedAmount,
-                    context.pageNumber,
-                    context.chapterNumber,
-                    payer
+            if (requestedReader && payer && requestedReader !== payer) {
+                sendPaymentRequiredWithError(
+                    req,
+                    res,
+                    context,
+                    'Payment sender does not match the requested reader address'
                 );
+                return;
             }
+
+            const entitlementReader = payer || requestedReader;
+            if (!entitlementReader) {
+                sendPaymentRequiredWithError(req, res, context, 'Unable to determine payment sender');
+                return;
+            }
+
+            req.readerAddress = entitlementReader;
+
+            if (!transaction) {
+                sendPaymentRequiredWithError(req, res, context, 'Missing settlement transaction');
+                return;
+            }
+
+            await recordPayment(
+                transaction,
+                entitlementReader,
+                context.bookId,
+                context.expectedAmount,
+                context.pageNumber,
+                context.chapterNumber,
+                payer
+            );
 
             next();
         });
@@ -168,4 +239,57 @@ interface BookPaymentContext {
     description: string;
     resourceUrl: string;
     v2Requirement: PaymentRequirementsV2;
+}
+
+function extractPaymentProofTxHash(req: Request): string | null {
+    const directHeader = req.header('x-payment-proof');
+    if (directHeader?.trim()) {
+        return normalizeTxHash(directHeader);
+    }
+
+    const legacyResponse = req.header('x-payment-response');
+    if (!legacyResponse?.trim()) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(legacyResponse) as { txHash?: string };
+        if (typeof parsed.txHash === 'string' && parsed.txHash.trim()) {
+            return normalizeTxHash(parsed.txHash);
+        }
+    } catch {
+        // ignore malformed legacy headers
+    }
+
+    return null;
+}
+
+function normalizeTxHash(value: string): string {
+    const trimmed = value.trim();
+    return trimmed.startsWith('0x') || trimmed.startsWith('0X')
+        ? trimmed.slice(2)
+        : trimmed;
+}
+
+function sendPaymentRequiredWithError(
+    req: Request,
+    res: Response,
+    context: BookPaymentContext,
+    error: string
+): void {
+    const paymentRequired = {
+        x402Version: 2 as const,
+        resource: {
+            url: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+            description: context.description,
+            mimeType: 'application/json',
+        },
+        accepts: [context.v2Requirement],
+    };
+
+    res.setHeader('payment-required', Buffer.from(JSON.stringify(paymentRequired)).toString('base64'));
+    res.status(402).json({
+        ...paymentRequired,
+        error,
+    });
 }

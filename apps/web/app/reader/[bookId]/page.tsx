@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
+import { openSTXTransfer } from '@stacks/connect';
 import type { Book } from '@stackpad/shared';
-import { formatStxAmount } from '@stackpad/x402-client';
+import { formatStxAmount, type PaymentProofData } from '@stackpad/x402-client';
 import { apiClient, type X402Diagnostics } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
@@ -19,6 +20,9 @@ interface PaymentInstructions {
     memo: string;
     network: string;
 }
+
+const VERIFY_ATTEMPTS = 18;
+const VERIFY_INTERVAL_MS = 2500;
 
 export default function ReaderPage() {
     const params = useParams();
@@ -36,7 +40,7 @@ export default function ReaderPage() {
     const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
     const [isDimmed, setIsDimmed] = useState(false);
     const [isSettlingPayment, setIsSettlingPayment] = useState(false);
-    const [buyerAddress, setBuyerAddress] = useState<string | null>(null);
+    const [pendingPaymentProof, setPendingPaymentProof] = useState<PaymentProofData | null>(null);
     const [x402Diagnostics, setX402Diagnostics] = useState<X402Diagnostics | null>(null);
 
     const requestCounterRef = useRef(0);
@@ -59,36 +63,6 @@ export default function ReaderPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [book, currentPage, userAddress]);
 
-    useEffect(() => {
-        if (!isAuthenticated) {
-            return;
-        }
-
-        let mounted = true;
-        void (async () => {
-            try {
-                const response = await fetch('/api/x402/buyer', { method: 'GET' });
-                if (!response.ok || !mounted) {
-                    return;
-                }
-                const data = await response.json() as { buyerAddress?: string };
-                if (data.buyerAddress && mounted) {
-                    setBuyerAddress(data.buyerAddress);
-                    setX402Diagnostics((prev) => ({
-                        ...(prev || {}),
-                        buyerAddress: data.buyerAddress,
-                    }));
-                }
-            } catch {
-                // Diagnostics enrichment only; ignore failures.
-            }
-        })();
-
-        return () => {
-            mounted = false;
-        };
-    }, [isAuthenticated]);
-
     async function loadBook() {
         try {
             const bookData = await apiClient.getBook(bookId);
@@ -100,7 +74,7 @@ export default function ReaderPage() {
         }
     }
 
-    async function loadPageContent(pageNum: number) {
+    async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData) {
         if (!userAddress) {
             return;
         }
@@ -108,11 +82,11 @@ export default function ReaderPage() {
         const requestId = ++requestCounterRef.current;
 
         setReaderState('loading');
-        setStatusMessage(null);
+        setStatusMessage(paymentProof ? 'Verifying payment and unlocking page...' : null);
         setIsDimmed(false);
 
         try {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress);
+            const result = await apiClient.getPage(bookId, pageNum, userAddress, paymentProof);
             if (requestId !== requestCounterRef.current) {
                 return;
             }
@@ -123,6 +97,19 @@ export default function ReaderPage() {
                 setIsDimmed(false);
                 setShowPaymentModal(false);
                 setStatusMessage(null);
+                setPendingPaymentProof(null);
+                if (paymentProof?.txHash) {
+                    setX402Diagnostics((prev) => ({
+                        ...(prev || {}),
+                        readerAddress: userAddress,
+                        paymentResponse: {
+                            ...(prev?.paymentResponse || {}),
+                            success: true,
+                            transaction: paymentProof.txHash,
+                            payer: userAddress,
+                        },
+                    }));
+                }
                 return;
             }
 
@@ -130,11 +117,13 @@ export default function ReaderPage() {
                 if (result.paymentInstructions) {
                     setPaymentInstructions(result.paymentInstructions);
                 }
+                if (!paymentProof) {
+                    setPendingPaymentProof(null);
+                }
 
                 const accepted = result.paymentRequiredV2?.accepts?.[0];
                 setX402Diagnostics({
                     readerAddress: userAddress,
-                    buyerAddress: buyerAddress || undefined,
                     paymentRequired: accepted ? {
                         amount: accepted.amount,
                         asset: accepted.asset,
@@ -165,59 +154,127 @@ export default function ReaderPage() {
         }
     }
 
-    async function settleWithStrictBuyerAdapter() {
-        if (!userAddress) {
+    async function settleWithReaderWallet() {
+        if (!userAddress || !paymentInstructions) {
             return;
         }
 
         setIsSettlingPayment(true);
         setReaderState('loading');
-        setStatusMessage('Settling payment via strict x402 buyer adapter...');
+        setStatusMessage('Confirm payment in your wallet...');
+        setShowPaymentModal(false);
+
+        let proof: PaymentProofData | null = null;
 
         try {
-            const result = await apiClient.payPageWithX402Adapter(bookId, currentPage, userAddress);
-            if (result.buyerAddress) {
-                setBuyerAddress(result.buyerAddress);
+            proof = await requestWalletPayment(paymentInstructions);
+            setPendingPaymentProof(proof);
+            await verifyAndUnlock(currentPage, proof);
+        } catch (error) {
+            console.error('Wallet payment failed:', error);
+            setReaderState('locked');
+            setIsDimmed(true);
+            setShowPaymentModal(true);
+            const message = error instanceof Error ? error.message : 'Payment failed';
+            if (!proof) {
+                setPendingPaymentProof(null);
             }
-            if (result.diagnostics) {
-                setX402Diagnostics(result.diagnostics);
-            }
+            setStatusMessage(message);
+            setX402Diagnostics({
+                readerAddress: userAddress,
+                error: message,
+            });
+        } finally {
+            setIsSettlingPayment(false);
+        }
+    }
+
+    async function verifyPendingPayment() {
+        if (!pendingPaymentProof) {
+            return;
+        }
+
+        setIsSettlingPayment(true);
+        setReaderState('loading');
+        setStatusMessage('Verifying pending payment...');
+        setShowPaymentModal(false);
+
+        try {
+            await verifyAndUnlock(currentPage, pendingPaymentProof);
+        } catch (error) {
+            console.error('Pending payment verification failed:', error);
+            setReaderState('locked');
+            setIsDimmed(true);
+            setShowPaymentModal(true);
+            setStatusMessage(error instanceof Error ? error.message : 'Payment verification failed');
+        } finally {
+            setIsSettlingPayment(false);
+        }
+    }
+
+    async function verifyAndUnlock(pageNum: number, paymentProof: PaymentProofData) {
+        if (!userAddress) {
+            throw new Error('Wallet address not available for verification.');
+        }
+
+        for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1) {
+            const result = await apiClient.getPage(bookId, pageNum, userAddress, paymentProof);
 
             if (result.content) {
                 setPageContent(result.content.content);
                 setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
+                setPendingPaymentProof(null);
                 setStatusMessage(null);
+                setX402Diagnostics((prev) => ({
+                    ...(prev || {}),
+                    readerAddress: userAddress,
+                    paymentResponse: {
+                        ...(prev?.paymentResponse || {}),
+                        success: true,
+                        transaction: paymentProof.txHash,
+                        payer: userAddress,
+                    },
+                }));
                 return;
             }
 
-            setReaderState('locked');
-            setIsDimmed(true);
-            setShowPaymentModal(true);
-            setStatusMessage(result.details || result.error || 'Payment settlement failed');
-            if (!result.diagnostics) {
-                setX402Diagnostics({
-                    readerAddress: result.readerAddress || userAddress,
-                    buyerAddress: result.buyerAddress || buyerAddress || undefined,
-                    error: result.error,
-                    details: result.details,
-                });
+            if (!result.requires402) {
+                throw new Error(result.error || 'Failed to verify payment.');
             }
-        } catch (error) {
-            console.error('Strict x402 payment failed:', error);
-            setReaderState('locked');
-            setIsDimmed(true);
-            setShowPaymentModal(true);
-            setStatusMessage(error instanceof Error ? error.message : 'Payment settlement failed');
+
+            const accepted = result.paymentRequiredV2?.accepts?.[0];
             setX402Diagnostics({
                 readerAddress: userAddress,
-                buyerAddress: buyerAddress || undefined,
-                error: error instanceof Error ? error.message : 'Payment settlement failed',
+                paymentRequired: accepted ? {
+                    amount: accepted.amount,
+                    asset: accepted.asset,
+                    network: accepted.network,
+                    payTo: accepted.payTo,
+                    maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+                    memo: accepted.extra?.memo as string | undefined,
+                } : undefined,
+                httpStatus: 402,
+                error: result.error,
+                details: result.details,
+                paymentResponse: {
+                    transaction: paymentProof.txHash,
+                    payer: userAddress,
+                },
             });
-        } finally {
-            setIsSettlingPayment(false);
+
+            if (isPendingVerification(result.error, result.details) && attempt < VERIFY_ATTEMPTS) {
+                setStatusMessage(`Payment submitted. Waiting for confirmation (${attempt}/${VERIFY_ATTEMPTS})...`);
+                await sleep(VERIFY_INTERVAL_MS);
+                continue;
+            }
+
+            const details = result.details ? ` (${result.details})` : '';
+            throw new Error(result.error ? `${result.error}${details}` : 'Payment verification failed.');
         }
+
+        throw new Error('Transaction is still pending. Tap "Verify payment" to keep checking without paying again.');
     }
 
     function goToNextPage() {
@@ -225,6 +282,7 @@ export default function ReaderPage() {
             return;
         }
         setPaymentInstructions(null);
+        setPendingPaymentProof(null);
         setCurrentPage((prev) => prev + 1);
     }
 
@@ -233,6 +291,7 @@ export default function ReaderPage() {
             return;
         }
         setPaymentInstructions(null);
+        setPendingPaymentProof(null);
         setCurrentPage((prev) => prev - 1);
     }
 
@@ -394,7 +453,7 @@ export default function ReaderPage() {
                             Entitlement check address: {x402Diagnostics?.readerAddress ?? userAddress ?? 'n/a'}
                         </p>
                         <p className="break-all">
-                            Buyer signer account: {x402Diagnostics?.buyerAddress ?? buyerAddress ?? 'n/a'}
+                            payer wallet account: {x402Diagnostics?.paymentResponse?.payer ?? userAddress ?? 'n/a'}
                         </p>
                         <p className="break-all">
                             payTo (author): {x402Diagnostics?.paymentRequired?.payTo ?? paymentInstructions?.recipient ?? 'n/a'}
@@ -447,7 +506,7 @@ export default function ReaderPage() {
                             >
                                 <div className="mb-5 flex items-start justify-between">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Strict x402 v2 buyer</p>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Reader wallet payment</p>
                                         <h2 className="mt-2 text-2xl font-display text-slate-900">Settle payment for page {currentPage}</h2>
                                     </div>
                                     <button onClick={() => setShowPaymentModal(false)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
@@ -461,6 +520,12 @@ export default function ReaderPage() {
                                     <p className="mt-3 break-all text-sm text-slate-500">Paid to: {paymentInstructions.recipient}</p>
                                 </div>
 
+                                {pendingPaymentProof?.txHash && (
+                                    <p className="mb-4 break-all rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                        Pending transaction: {pendingPaymentProof.txHash}
+                                    </p>
+                                )}
+
                                 {statusMessage && (
                                     <p className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                                         {statusMessage}
@@ -471,8 +536,14 @@ export default function ReaderPage() {
                                     <button onClick={() => setShowPaymentModal(false)} disabled={isSettlingPayment} className="btn-secondary flex-1">
                                         Cancel
                                     </button>
-                                    <button onClick={() => void settleWithStrictBuyerAdapter()} disabled={isSettlingPayment} className="btn-primary flex-1">
-                                        {isSettlingPayment ? 'Settling...' : 'Pay via adapter'}
+                                    <button
+                                        onClick={() => void (pendingPaymentProof ? verifyPendingPayment() : settleWithReaderWallet())}
+                                        disabled={isSettlingPayment}
+                                        className="btn-primary flex-1"
+                                    >
+                                        {isSettlingPayment
+                                            ? (pendingPaymentProof ? 'Verifying...' : 'Processing...')
+                                            : (pendingPaymentProof ? 'Verify payment' : 'Pay with wallet')}
                                     </button>
                                 </div>
                             </motion.div>
@@ -482,4 +553,67 @@ export default function ReaderPage() {
             </AnimatePresence>
         </div>
     );
+}
+
+async function requestWalletPayment(instructions: PaymentInstructions): Promise<PaymentProofData> {
+    const network = toWalletNetwork(instructions.network);
+    const amount = BigInt(instructions.amount);
+
+    return await new Promise<PaymentProofData>((resolve, reject) => {
+        void openSTXTransfer({
+            network,
+            recipient: instructions.recipient,
+            amount,
+            memo: instructions.memo,
+            onFinish: (response: unknown) => {
+                const record = response && typeof response === 'object'
+                    ? response as Record<string, unknown>
+                    : {};
+                const txHash = readTxHash(record);
+                const txRaw = typeof record.txRaw === 'string' && record.txRaw ? record.txRaw : undefined;
+
+                if (!txHash) {
+                    reject(new Error('Wallet did not return a transaction hash.'));
+                    return;
+                }
+
+                resolve(txRaw ? { txHash, txRaw } : { txHash });
+            },
+            onCancel: () => reject(new Error('Payment was cancelled in wallet.')),
+        });
+    });
+}
+
+function toWalletNetwork(network: string): 'mainnet' | 'testnet' {
+    if (network === 'mainnet' || network === 'stacks:1') {
+        return 'mainnet';
+    }
+    return 'testnet';
+}
+
+function readTxHash(response: Record<string, unknown>): string | null {
+    const txId = response.txId;
+    if (typeof txId === 'string' && txId) {
+        return txId;
+    }
+
+    const txid = response.txid;
+    if (typeof txid === 'string' && txid) {
+        return txid;
+    }
+
+    return null;
+}
+
+function isPendingVerification(error?: string, details?: string): boolean {
+    const combined = `${error || ''} ${details || ''}`.toLowerCase();
+    return combined.includes('transaction_pending')
+        || combined.includes('pending')
+        || combined.includes('mempool');
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
