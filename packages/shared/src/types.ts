@@ -79,6 +79,8 @@ export interface ContentResponse {
     chapterNumber?: number;
     nextPage?: number;
     prevPage?: number;
+    renderType?: 'text' | 'pdf-page';
+    pdfPageBase64?: string;
 }
 
 // x402 specific types

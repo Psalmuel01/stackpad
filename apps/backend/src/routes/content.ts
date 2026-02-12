@@ -35,7 +35,12 @@ router.get('/:bookId/page/:pageNum', async (req: X402Request, res: Response) => 
                 return;
             }
 
-            const page = result.rows[0];
+            const page = result.rows[0] as {
+                content: string;
+                page_number: number;
+                chapter_number: number | null;
+            };
+            const rendered = parseStoredPageContent(page.content);
 
             // Get next and previous page numbers
             const nextPage = await pool.query(
@@ -50,7 +55,9 @@ router.get('/:bookId/page/:pageNum', async (req: X402Request, res: Response) => 
 
             res.json({
                 success: true,
-                content: page.content,
+                content: rendered.text,
+                renderType: rendered.renderType,
+                pdfPageBase64: rendered.pdfPageBase64,
                 pageNumber: page.page_number,
                 chapterNumber: page.chapter_number,
                 nextPage: nextPage.rows.length > 0 ? nextPage.rows[0].page_number : null,
@@ -97,7 +104,15 @@ router.get('/:bookId/chapter/:chapterNum', async (req: X402Request, res: Respons
             res.json({
                 success: true,
                 chapterNumber: chapterNum,
-                pages: result.rows,
+                pages: result.rows.map((row) => {
+                    const parsed = parseStoredPageContent(String(row.content ?? ''));
+                    return {
+                        pageNumber: row.page_number,
+                        content: parsed.text,
+                        renderType: parsed.renderType,
+                        pdfPageBase64: parsed.pdfPageBase64,
+                    };
+                }),
             });
         });
     } catch (error) {
@@ -107,3 +122,39 @@ router.get('/:bookId/chapter/:chapterNum', async (req: X402Request, res: Respons
 });
 
 export default router;
+
+function parseStoredPageContent(rawContent: string): {
+    text: string;
+    renderType: 'text' | 'pdf-page';
+    pdfPageBase64?: string;
+} {
+    const trimmed = rawContent.trim();
+    if (!trimmed.startsWith('{')) {
+        return {
+            text: rawContent,
+            renderType: 'text',
+        };
+    }
+
+    try {
+        const parsed = JSON.parse(trimmed) as {
+            format?: string;
+            text?: string;
+            pdfPageBase64?: string;
+        };
+        if (parsed.format === 'pdf-page' && typeof parsed.pdfPageBase64 === 'string' && parsed.pdfPageBase64) {
+            return {
+                text: typeof parsed.text === 'string' ? parsed.text : '',
+                renderType: 'pdf-page',
+                pdfPageBase64: parsed.pdfPageBase64,
+            };
+        }
+    } catch {
+        // keep legacy raw text fallback
+    }
+
+    return {
+        text: rawContent,
+        renderType: 'text',
+    };
+}

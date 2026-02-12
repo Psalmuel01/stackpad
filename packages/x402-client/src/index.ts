@@ -232,8 +232,19 @@ export function microStxToStx(microStx: bigint): number {
  */
 export function formatStxAmount(microStx: bigint | number | string): string {
     const normalizedMicroStx = toMicroStx(microStx);
-    const stx = microStxToStx(normalizedMicroStx);
-    return `${stx.toFixed(6)} STX`;
+    const zero = BigInt(0);
+    const oneStx = BigInt(1_000_000);
+    const sign = normalizedMicroStx < zero ? '-' : '';
+    const absoluteMicroStx = normalizedMicroStx < zero ? -normalizedMicroStx : normalizedMicroStx;
+    const whole = absoluteMicroStx / oneStx;
+    const fractionalRaw = (absoluteMicroStx % oneStx).toString().padStart(6, '0');
+    const fractional = fractionalRaw.replace(/0+$/, '');
+
+    if (!fractional) {
+        return `${sign}${whole.toString()} STX`;
+    }
+
+    return `${sign}${whole.toString()}.${fractional} STX`;
 }
 
 function toMicroStx(value: bigint | number | string): bigint {

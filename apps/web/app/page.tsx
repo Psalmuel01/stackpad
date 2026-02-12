@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { BrandLogo } from '@/components/BrandLogo';
 
 const fadeUp = {
     initial: { opacity: 0, y: 16 },
@@ -20,9 +21,7 @@ export default function Home() {
         <div className="app-shell">
             <header className="topbar">
                 <div className="layout-wrap flex h-20 items-center justify-between">
-                    <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">
-                        Stackpad
-                    </Link>
+                    <BrandLogo />
                     <div className="flex items-center gap-3">
                         <Link href="/library" className="btn-secondary">Library</Link>
                         <Link href="/author" className="btn-secondary">Author</Link>

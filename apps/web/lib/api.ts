@@ -254,6 +254,7 @@ interface UploadPageInput {
     pageNumber: number;
     chapterNumber?: number;
     content: string;
+    pdfPageBase64?: string;
 }
 
 interface AuthorEarningsApiResponse {

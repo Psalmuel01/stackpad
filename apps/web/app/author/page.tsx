@@ -8,11 +8,17 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useToast } from '@/components/ToastProvider';
+import { BrandLogo } from '@/components/BrandLogo';
 
 const CHARS_PER_PAGE = 1500;
 const DEFAULT_PAGE_PRICE = '100000';
 const PDFJS_CDN_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs';
 const PDFJS_WORKER_CDN_URL = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs';
+const PDF_LIB_CDN_URLS = [
+    'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm',
+    'https://esm.sh/pdf-lib@1.17.1',
+];
 
 const SAMPLE_BOOKS: Array<{ title: string; content: string }> = [
     {
@@ -126,13 +132,6 @@ When the system is quiet, people can focus on decisions instead of recovery.`.re
     },
 ];
 
-type NoticeTone = 'success' | 'error';
-
-interface Notice {
-    text: string;
-    tone: NoticeTone;
-}
-
 interface EditableBook {
     id: number;
     title: string;
@@ -144,6 +143,7 @@ interface UploadPagePayload {
     pageNumber: number;
     chapterNumber: number;
     content: string;
+    pdfPageBase64?: string;
 }
 
 interface PdfJsModule {
@@ -166,10 +166,29 @@ interface PdfPage {
     }>;
 }
 
+interface PdfLibModule {
+    PDFDocument: {
+        load: (source: ArrayBuffer | Uint8Array) => Promise<PdfLibDocument>;
+        create: () => Promise<PdfLibDocument>;
+    };
+}
+
+interface PdfLibDocument {
+    copyPages: (source: PdfLibDocument, indices: number[]) => Promise<PdfLibPage[]>;
+    addPage: (page: PdfLibPage) => void;
+    save: () => Promise<Uint8Array>;
+}
+
+interface PdfLibPage {
+    ref?: unknown;
+}
+
 let cachedPdfJs: PdfJsModule | null = null;
+let cachedPdfLib: PdfLibModule | null = null;
 
 export default function AuthorPage() {
     const { isAuthenticated, userAddress, connectWallet } = useAuth();
+    const { pushToast } = useToast();
     const [uploading, setUploading] = useState(false);
     const [processingFile, setProcessingFile] = useState(false);
 
@@ -181,7 +200,6 @@ export default function AuthorPage() {
 
     const [detectedPages, setDetectedPages] = useState<UploadPagePayload[] | null>(null);
     const [sourceFileName, setSourceFileName] = useState<string | null>(null);
-    const [notice, setNotice] = useState<Notice | null>(null);
     const [authorBooks, setAuthorBooks] = useState<EditableBook[]>([]);
     const [booksLoading, setBooksLoading] = useState(false);
     const [booksSaving, setBooksSaving] = useState<Record<number, boolean>>({});
@@ -236,23 +254,34 @@ export default function AuthorPage() {
 
         const title = bookTitle.trim();
         if (!title) {
-            setNotice({ text: 'Please add a title before publishing.', tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'Missing title',
+                message: 'Add a title before publishing.',
+            });
             return;
         }
 
         if (effectivePages.length === 0) {
-            setNotice({ text: 'Please add content or upload a file with readable text.', tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'No content found',
+                message: 'Add text or upload a readable file before publishing.',
+            });
             return;
         }
 
         const microStxPrice = parseMicroStx(pagePrice);
         if (microStxPrice === null) {
-            setNotice({ text: 'Page price must be a non-negative integer in microSTX.', tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'Invalid page price',
+                message: 'Price must be a non-negative integer in microSTX.',
+            });
             return;
         }
 
         setUploading(true);
-        setNotice(null);
 
         try {
             await apiClient.uploadBook(
@@ -269,12 +298,20 @@ export default function AuthorPage() {
                 effectivePages
             );
 
-            setNotice({ text: 'Book uploaded successfully.', tone: 'success' });
+            pushToast({
+                tone: 'success',
+                title: 'Upload successful',
+                message: `"${title}" is now live in your library.`,
+            });
             clearUploadForm();
             await loadAuthorBooks(userAddress);
         } catch (error) {
             console.error(error);
-            setNotice({ text: 'Upload failed. Check server logs and try again.', tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'Upload failed',
+                message: 'The book could not be published. Please try again.',
+            });
         } finally {
             setUploading(false);
         }
@@ -286,9 +323,11 @@ export default function AuthorPage() {
         setBookContent(random.content);
         setDetectedPages(null);
         setSourceFileName(null);
-        setNotice({
-            text: `Loaded random sample: ${random.title}`,
-            tone: 'success',
+        pushToast({
+            tone: 'info',
+            title: 'Sample loaded',
+            message: random.title,
+            durationMs: 2800,
         });
     }
 
@@ -299,7 +338,6 @@ export default function AuthorPage() {
         }
 
         setProcessingFile(true);
-        setNotice(null);
 
         try {
             const pages = await extractPagesFromFile(file);
@@ -316,15 +354,21 @@ export default function AuthorPage() {
                 setBookTitle(stripExtension(file.name));
             }
 
-            setNotice({
-                text: `Detected ${pages.length} pages from ${file.name}. You can still edit text manually for testing.`,
+            const preservedPdfPages = pages.some((page) => typeof page.pdfPageBase64 === 'string' && page.pdfPageBase64.length > 0);
+            pushToast({
                 tone: 'success',
+                title: 'File processed',
+                message: preservedPdfPages
+                    ? `${pages.length} pages detected from ${file.name}.`
+                    : `${pages.length} pages detected from ${file.name} (text mode).`,
             });
         } catch (error) {
             console.error(error);
-            setNotice({
-                text: error instanceof Error ? error.message : 'Failed to parse selected file.',
+            const message = error instanceof Error ? error.message : 'Failed to parse selected file.';
+            pushToast({
                 tone: 'error',
+                title: 'File parsing failed',
+                message,
             });
         } finally {
             setProcessingFile(false);
@@ -345,7 +389,7 @@ export default function AuthorPage() {
             <div className="app-shell">
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
-                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <BrandLogo />
                         <ThemeToggle />
                     </div>
                 </header>
@@ -368,7 +412,7 @@ export default function AuthorPage() {
         <div className="app-shell">
             <header className="topbar">
                 <div className="layout-wrap flex h-20 items-center justify-between">
-                    <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    <BrandLogo />
                     <div className="flex items-center gap-3">
                         <Link href="/library" className="btn-secondary">Library</Link>
                         <ThemeToggle />
@@ -453,7 +497,12 @@ export default function AuthorPage() {
                                             type="button"
                                             onClick={() => {
                                                 clearUploadForm();
-                                                setNotice({ text: 'Cleared imported file content and prefilled fields.', tone: 'success' });
+                                                pushToast({
+                                                    tone: 'info',
+                                                    title: 'File mode cleared',
+                                                    message: 'Imported file content and prefills were reset.',
+                                                    durationMs: 2400,
+                                                });
                                             }}
                                             className="rounded-md border border-slate-300 px-2 py-1 hover:bg-slate-50"
                                         >
@@ -513,19 +562,6 @@ export default function AuthorPage() {
                                     placeholder="Book ID from contract"
                                 />
                             </div>
-
-                            {notice && (
-                                <div
-                                    className={[
-                                        'rounded-xl border px-4 py-3 text-sm',
-                                        notice.tone === 'success'
-                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                            : 'border-rose-200 bg-rose-50 text-rose-700',
-                                    ].join(' ')}
-                                >
-                                    {notice.text}
-                                </div>
-                            )}
 
                             <button type="submit" disabled={uploading || processingFile} className="btn-primary w-full py-3 text-base">
                                 {uploading ? 'Uploading...' : 'Publish book'}
@@ -636,7 +672,11 @@ export default function AuthorPage() {
 
         const parsedPrice = parseMicroStx(target.pagePrice);
         if (parsedPrice === null) {
-            setNotice({ text: 'Page price must be a non-negative integer in microSTX.', tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'Invalid page price',
+                message: `Book #${bookId} has an invalid microSTX price.`,
+            });
             return;
         }
 
@@ -648,11 +688,19 @@ export default function AuthorPage() {
                 pagePrice: parsedPrice.toString(),
                 chapterPrice: (parsedPrice * BigInt(5)).toString(),
             });
-            setNotice({ text: `Updated book #${bookId}.`, tone: 'success' });
+            pushToast({
+                tone: 'success',
+                title: 'Update successful',
+                message: `Book #${bookId} settings were saved.`,
+            });
             await loadAuthorBooks(userAddress);
         } catch (error) {
             console.error(error);
-            setNotice({ text: `Failed to update book #${bookId}.`, tone: 'error' });
+            pushToast({
+                tone: 'error',
+                title: 'Update failed',
+                message: `Could not save changes for book #${bookId}.`,
+            });
         } finally {
             setBooksSaving((prev) => ({ ...prev, [bookId]: false }));
         }
@@ -738,16 +786,34 @@ async function parsePdfPages(file: File): Promise<UploadPagePayload[]> {
     const loadingTask = pdfjs.getDocument({ data });
     const document = await loadingTask.promise;
 
+    let pdfLib: PdfLibModule | null = null;
+    let sourcePdf: PdfLibDocument | null = null;
+    try {
+        pdfLib = await loadPdfLib();
+        sourcePdf = await pdfLib.PDFDocument.load(new Uint8Array(data));
+    } catch (error) {
+        console.warn('Failed to initialize PDF page exporter; continuing with text extraction only:', error);
+    }
+
     const pages: UploadPagePayload[] = [];
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
         const page = await document.getPage(pageNumber);
         const textContent = await page.getTextContent();
         const text = normalizePdfText(textContent.items);
+        let singlePagePdf: Uint8Array | null = null;
+        if (sourcePdf && pdfLib) {
+            try {
+                singlePagePdf = await exportSinglePdfPage(pdfLib, sourcePdf, pageNumber - 1);
+            } catch (error) {
+                console.warn(`Failed to export PDF page ${pageNumber}; falling back to text for that page.`, error);
+            }
+        }
 
         pages.push({
             pageNumber,
             chapterNumber: 1,
             content: text || `[Page ${pageNumber} has no selectable text]`,
+            pdfPageBase64: singlePagePdf ? bytesToBase64(singlePagePdf) : undefined,
         });
     }
 
@@ -782,6 +848,57 @@ async function loadPdfJs(): Promise<PdfJsModule> {
 
     cachedPdfJs = maybePdfJs;
     return maybePdfJs;
+}
+
+async function loadPdfLib(): Promise<PdfLibModule> {
+    if (cachedPdfLib) {
+        return cachedPdfLib;
+    }
+
+    let lastError: unknown = null;
+    for (const url of PDF_LIB_CDN_URLS) {
+        try {
+            const imported = await importExternalModule(url) as Record<string, unknown> | undefined;
+            const maybePdfLib = ((imported && 'default' in imported ? imported.default : imported) as PdfLibModule | undefined);
+
+            if (
+                maybePdfLib?.PDFDocument
+                && typeof maybePdfLib.PDFDocument.load === 'function'
+                && typeof maybePdfLib.PDFDocument.create === 'function'
+            ) {
+                cachedPdfLib = maybePdfLib;
+                return maybePdfLib;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    throw new Error(
+        lastError instanceof Error
+            ? `Failed to initialize PDF page exporter: ${lastError.message}`
+            : 'Failed to initialize PDF page exporter'
+    );
+}
+
+async function exportSinglePdfPage(
+    pdfLib: PdfLibModule,
+    sourcePdf: PdfLibDocument,
+    pageIndex: number
+): Promise<Uint8Array> {
+    const singlePageDocument = await pdfLib.PDFDocument.create();
+    const [copiedPage] = await singlePageDocument.copyPages(sourcePdf, [pageIndex]);
+    singlePageDocument.addPage(copiedPage);
+    return singlePageDocument.save();
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 1) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+
+    return btoa(binary);
 }
 
 async function importExternalModule(url: string): Promise<unknown> {

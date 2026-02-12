@@ -1,0 +1,10 @@
+<svg width="240" height="52" viewBox="0 0 240 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke="#1F3A77" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="1.5" y="1.5" width="49" height="49" rx="12.5"/>
+    <path d="M14 16.5a4 4 0 0 1 4-4h7.5v26H18a4 4 0 0 0-4 4v-26Z"/>
+    <path d="M38 16.5a4 4 0 0 0-4-4h-8.5v26H34a4 4 0 0 1 4 4v-26Z"/>
+    <path d="M25.5 12.5v26"/>
+  </g>
+  <circle cx="42" cy="10" r="2.2" fill="#1F3A77"/>
+  <text x="65" y="34" fill="#0F172A" font-family="Iowan Old Style, Palatino Linotype, Georgia, serif" font-size="30" letter-spacing="0.2">Stackpad</text>
+</svg>

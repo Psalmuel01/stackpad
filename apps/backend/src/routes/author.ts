@@ -43,7 +43,8 @@ router.post('/upload', async (req: Request, res: Response) => {
 
         const totalPages = normalizedPages.pages.length;
         const totalChapters = getChapterCount(normalizedPages.pages);
-        const coverImageUrl = normalizeCoverUrl(book.coverImageUrl);
+        const coverImageUrl = normalizeCoverUrl(book.coverImageUrl)
+            || buildDefaultCoverImageUrl(book.authorAddress, book.title);
         const contractBookId = normalizeOptionalInteger(book.contractBookId);
         if (book.contractBookId !== undefined && book.contractBookId !== null && contractBookId === null) {
             res.status(400).json({ error: 'Invalid request: contractBookId must be a positive integer' });
@@ -76,7 +77,7 @@ router.post('/upload', async (req: Request, res: Response) => {
         for (const page of normalizedPages.pages) {
             await client.query(
                 'INSERT INTO pages (book_id, page_number, chapter_number, content) VALUES ($1, $2, $3, $4)',
-                [bookId, page.pageNumber, page.chapterNumber || null, page.content]
+                [bookId, page.pageNumber, page.chapterNumber || null, serializePageContent(page)]
             );
         }
 
@@ -173,7 +174,15 @@ router.patch('/books/:bookId', async (req: Request, res: Response) => {
                 res.status(400).json({ error: 'Invalid coverImageUrl value' });
                 return;
             }
-            params.push(normalizedCover);
+
+            const fallbackTitle = typeof req.body.title === 'string' && req.body.title.trim()
+                ? req.body.title
+                : `book-${bookId}`;
+            const coverValue = normalizedCover === null
+                ? buildDefaultCoverImageUrl(authorAddress, fallbackTitle)
+                : normalizedCover;
+
+            params.push(coverValue);
             updates.push(`cover_image_url = $${params.length}`);
         }
 
@@ -252,12 +261,12 @@ router.patch('/books/:bookId', async (req: Request, res: Response) => {
 
 function normalizePages(pages: unknown[]): {
     valid: true;
-    pages: Array<{ pageNumber: number; chapterNumber?: number; content: string }>;
+    pages: Array<{ pageNumber: number; chapterNumber?: number; content: string; pdfPageBase64?: string }>;
 } | {
     valid: false;
     error: string;
 } {
-    const normalized: Array<{ pageNumber: number; chapterNumber: number; content: string }> = [];
+    const normalized: Array<{ pageNumber: number; chapterNumber: number; content: string; pdfPageBase64?: string }> = [];
 
     for (const raw of pages) {
         if (!raw || typeof raw !== 'object') {
@@ -271,6 +280,9 @@ function normalizePages(pages: unknown[]): {
         const pageNumber = normalizePositiveInteger(source.pageNumber);
         const chapterNumber = normalizePositiveInteger(source.chapterNumber);
         const content = typeof source.content === 'string' ? source.content.trim() : '';
+        const pdfPageBase64 = typeof source.pdfPageBase64 === 'string'
+            ? source.pdfPageBase64.trim()
+            : undefined;
 
         if (!pageNumber || !content) {
             return {
@@ -279,10 +291,18 @@ function normalizePages(pages: unknown[]): {
             };
         }
 
+        if (pdfPageBase64 !== undefined && !isBase64String(pdfPageBase64)) {
+            return {
+                valid: false,
+                error: 'Invalid request: pdfPageBase64 must be a valid base64 string',
+            };
+        }
+
         normalized.push({
             pageNumber,
             chapterNumber: chapterNumber || 1,
             content,
+            pdfPageBase64: pdfPageBase64 || undefined,
         });
     }
 
@@ -303,6 +323,25 @@ function normalizePages(pages: unknown[]): {
         valid: true,
         pages: normalized,
     };
+}
+
+function serializePageContent(page: { content: string; pdfPageBase64?: string }): string {
+    if (!page.pdfPageBase64) {
+        return page.content;
+    }
+
+    return JSON.stringify({
+        format: 'pdf-page',
+        text: page.content,
+        pdfPageBase64: page.pdfPageBase64,
+    });
+}
+
+function isBase64String(value: string): boolean {
+    if (!value || value.length % 4 !== 0) {
+        return false;
+    }
+    return /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
 function normalizePositiveInteger(value: unknown): number | null {
@@ -374,6 +413,14 @@ function normalizeCoverUpdate(value: unknown): string | null | undefined {
 
     const normalized = normalizeCoverUrl(trimmed);
     return normalized ?? undefined;
+}
+
+function buildDefaultCoverImageUrl(authorAddress: string, title: string): string {
+    const seed = `${authorAddress.trim().slice(0, 10)}-${title.trim().toLowerCase()}`
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48) || 'stackpad';
+    return `https://picsum.photos/seed/${seed}/400/600`;
 }
 
 function getChapterCount(pages: Array<{ chapterNumber?: number }>): number {

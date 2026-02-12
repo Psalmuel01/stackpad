@@ -5,12 +5,14 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import { openSTXTransfer } from '@stacks/connect';
-import type { Book } from '@stackpad/shared';
+import type { Book, ContentResponse } from '@stackpad/shared';
 import { formatStxAmount, type PaymentProofData } from '@stackpad/x402-client';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useToast } from '@/components/ToastProvider';
+import { BrandLogo } from '@/components/BrandLogo';
 
 type ReaderState = 'idle' | 'loading' | 'locked' | 'error' | 'ready';
 
@@ -29,10 +31,13 @@ export default function ReaderPage() {
     const bookId = parseInt(params.bookId as string, 10);
 
     const { isAuthenticated, userAddress, connectWallet } = useAuth();
+    const { pushToast } = useToast();
 
     const [book, setBook] = useState<Book | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [pageContent, setPageContent] = useState('');
+    const [pageRenderType, setPageRenderType] = useState<'text' | 'pdf-page'>('text');
+    const [pagePdfBase64, setPagePdfBase64] = useState<string | null>(null);
     const [readerState, setReaderState] = useState<ReaderState>('idle');
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -41,8 +46,12 @@ export default function ReaderPage() {
     const [isDimmed, setIsDimmed] = useState(false);
     const [isSettlingPayment, setIsSettlingPayment] = useState(false);
     const [pendingPaymentProof, setPendingPaymentProof] = useState<PaymentProofData | null>(null);
+    const [pageTurnCue, setPageTurnCue] = useState<{ key: number; direction: 'next' | 'prev' } | null>(null);
 
     const requestCounterRef = useRef(0);
+    const pageTurnCounterRef = useRef(0);
+    const pageTurnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingButtonTurnRef = useRef<'next' | 'prev' | null>(null);
 
     useEffect(() => {
         if (!isAuthenticated || !userAddress || Number.isNaN(bookId)) {
@@ -62,6 +71,14 @@ export default function ReaderPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [book, currentPage, userAddress]);
 
+    useEffect(() => {
+        return () => {
+            if (pageTurnTimeoutRef.current) {
+                clearTimeout(pageTurnTimeoutRef.current);
+            }
+        };
+    }, []);
+
     async function loadBook() {
         try {
             const bookData = await apiClient.getBook(bookId);
@@ -71,6 +88,18 @@ export default function ReaderPage() {
             setReaderState('error');
             setStatusMessage('Book could not be loaded.');
         }
+    }
+
+    function applyPagePayload(payload: ContentResponse) {
+        setPageContent(payload.content);
+        if (payload.renderType === 'pdf-page' && payload.pdfPageBase64) {
+            setPageRenderType('pdf-page');
+            setPagePdfBase64(payload.pdfPageBase64);
+            return;
+        }
+
+        setPageRenderType('text');
+        setPagePdfBase64(null);
     }
 
     async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData) {
@@ -91,7 +120,12 @@ export default function ReaderPage() {
             }
 
             if (result.content) {
-                setPageContent(result.content.content);
+                applyPagePayload(result.content);
+                const pendingTurn = pendingButtonTurnRef.current;
+                if (pendingTurn) {
+                    triggerPageTurn(pendingTurn);
+                    pendingButtonTurnRef.current = null;
+                }
                 setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
@@ -119,10 +153,16 @@ export default function ReaderPage() {
             }
 
             setReaderState('error');
+            setPageRenderType('text');
+            setPagePdfBase64(null);
+            pendingButtonTurnRef.current = null;
             setPageContent(result.error || 'Failed to load page content');
         } catch (error) {
             console.error('Failed to load page:', error);
             setReaderState('error');
+            setPageRenderType('text');
+            setPagePdfBase64(null);
+            pendingButtonTurnRef.current = null;
             setPageContent('Failed to load page content');
         }
     }
@@ -142,6 +182,12 @@ export default function ReaderPage() {
         try {
             proof = await requestWalletPayment(paymentInstructions);
             setPendingPaymentProof(proof);
+            pushToast({
+                tone: 'info',
+                title: 'Payment submitted',
+                message: `Transaction ${proof.txHash.slice(0, 10)}... was sent. Confirming now.`,
+                durationMs: 4200,
+            });
             await verifyAndUnlock(currentPage, proof);
         } catch (error) {
             console.error('Wallet payment failed:', error);
@@ -153,6 +199,11 @@ export default function ReaderPage() {
                 setPendingPaymentProof(null);
             }
             setStatusMessage(message);
+            pushToast({
+                tone: 'error',
+                title: 'Payment failed',
+                message,
+            });
         } finally {
             setIsSettlingPayment(false);
         }
@@ -175,7 +226,13 @@ export default function ReaderPage() {
             setReaderState('locked');
             setIsDimmed(true);
             setShowPaymentModal(true);
-            setStatusMessage(error instanceof Error ? error.message : 'Payment verification failed');
+            const message = error instanceof Error ? error.message : 'Payment verification failed';
+            setStatusMessage(message);
+            pushToast({
+                tone: 'error',
+                title: 'Verification failed',
+                message,
+            });
         } finally {
             setIsSettlingPayment(false);
         }
@@ -190,12 +247,22 @@ export default function ReaderPage() {
             const result = await apiClient.getPage(bookId, pageNum, userAddress, paymentProof);
 
             if (result.content) {
-                setPageContent(result.content.content);
+                applyPagePayload(result.content);
+                const pendingTurn = pendingButtonTurnRef.current;
+                if (pendingTurn) {
+                    triggerPageTurn(pendingTurn);
+                    pendingButtonTurnRef.current = null;
+                }
                 setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
                 setPendingPaymentProof(null);
                 setStatusMessage(null);
+                pushToast({
+                    tone: 'success',
+                    title: 'Payment confirmed',
+                    message: `Page ${pageNum} unlocked successfully.`,
+                });
                 return;
             }
 
@@ -216,19 +283,34 @@ export default function ReaderPage() {
         throw new Error('Transaction is still pending. Tap "Verify payment" to keep checking without paying again.');
     }
 
-    function goToNextPage() {
+    function triggerPageTurn(direction: 'next' | 'prev') {
+        const nextKey = ++pageTurnCounterRef.current;
+        setPageTurnCue({ key: nextKey, direction });
+
+        if (pageTurnTimeoutRef.current) {
+            clearTimeout(pageTurnTimeoutRef.current);
+        }
+
+        pageTurnTimeoutRef.current = setTimeout(() => {
+            setPageTurnCue((current) => (current?.key === nextKey ? null : current));
+        }, 360);
+    }
+
+    function goToNextPage(fromButton = false) {
         if (!book || currentPage >= book.totalPages) {
             return;
         }
+        pendingButtonTurnRef.current = fromButton ? 'next' : null;
         setPaymentInstructions(null);
         setPendingPaymentProof(null);
         setCurrentPage((prev) => prev + 1);
     }
 
-    function goToPrevPage() {
+    function goToPrevPage(fromButton = false) {
         if (currentPage <= 1) {
             return;
         }
+        pendingButtonTurnRef.current = fromButton ? 'prev' : null;
         setPaymentInstructions(null);
         setPendingPaymentProof(null);
         setCurrentPage((prev) => prev - 1);
@@ -237,9 +319,9 @@ export default function ReaderPage() {
     function handleDragEnd(info: PanInfo) {
         const threshold = 50;
         if (info.offset.x < -threshold) {
-            goToNextPage();
+            goToNextPage(false);
         } else if (info.offset.x > threshold) {
-            goToPrevPage();
+            goToPrevPage(false);
         }
     }
 
@@ -248,7 +330,7 @@ export default function ReaderPage() {
             <div className="app-shell">
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
-                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <BrandLogo />
                         <ThemeToggle />
                     </div>
                 </header>
@@ -289,7 +371,10 @@ export default function ReaderPage() {
         <div className="app-shell">
             <header className="topbar">
                 <div className="layout-wrap flex h-20 items-center justify-between gap-4">
-                    <Link href="/library" className="text-sm text-slate-600 transition-colors hover:text-slate-900">Library</Link>
+                    <div className="flex items-center gap-3">
+                        <BrandLogo className="hidden sm:inline-flex" labelClassName="font-display text-2xl tracking-tight text-slate-900" />
+                        <Link href="/library" className="font-medium text-slate-600 transition-colors hover:text-slate-900">Library</Link>
+                    </div>
                     <div className="min-w-0 flex-1 px-2 text-center">
                         <p className="truncate font-display text-2xl text-slate-900 md:text-3xl">{book?.title || 'Loading...'}</p>
                         <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
@@ -341,7 +426,11 @@ export default function ReaderPage() {
                                 className="relative"
                             >
                                 <article className="reader-copy min-h-[56vh] whitespace-pre-wrap">
-                                    {readerState === 'error' ? statusMessage || pageContent : pageContent}
+                                    {readerState === 'error'
+                                        ? statusMessage || pageContent
+                                        : (pageRenderType === 'pdf-page' && pagePdfBase64
+                                            ? <PdfPageEmbed pdfPageBase64={pagePdfBase64} fallbackText={pageContent} />
+                                            : pageContent)}
                                 </article>
 
                                 {isDimmed && (
@@ -354,11 +443,32 @@ export default function ReaderPage() {
                             </motion.div>
                         )}
                     </AnimatePresence>
+
+                    <AnimatePresence>
+                        {pageTurnCue && (
+                            <motion.div
+                                key={`page-turn-${pageTurnCue.key}`}
+                                initial={{ opacity: 0, scale: 0.66 }}
+                                animate={{ opacity: 0.88, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.84 }}
+                                transition={{ duration: 0.28, ease: 'easeOut' }}
+                                className={[
+                                    'pointer-events-none absolute bottom-0 z-20 h-24 w-24 border border-[hsl(var(--border))] bg-[hsl(var(--surface-soft)/0.96)] shadow-[0_-8px_22px_rgba(15,23,42,0.12)]',
+                                    pageTurnCue.direction === 'next' ? 'right-0' : 'left-0',
+                                ].join(' ')}
+                                style={{
+                                    clipPath: pageTurnCue.direction === 'next'
+                                        ? 'polygon(100% 0%, 0% 100%, 100% 100%)'
+                                        : 'polygon(0% 0%, 0% 100%, 100% 100%)',
+                                }}
+                            />
+                        )}
+                    </AnimatePresence>
                 </motion.section>
 
                 <div className="mt-6 flex items-center justify-between gap-3">
                     <button
-                        onClick={goToPrevPage}
+                        onClick={() => goToPrevPage(true)}
                         disabled={currentPage === 1}
                         className="btn-secondary min-w-[8.5rem] disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -377,7 +487,7 @@ export default function ReaderPage() {
                     )}
 
                     <button
-                        onClick={goToNextPage}
+                        onClick={() => goToNextPage(true)}
                         disabled={!book || currentPage >= book.totalPages}
                         className="btn-secondary min-w-[8.5rem] disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -453,6 +563,33 @@ export default function ReaderPage() {
                     </>
                 )}
             </AnimatePresence>
+        </div>
+    );
+}
+
+function PdfPageEmbed({ pdfPageBase64, fallbackText }: { pdfPageBase64: string; fallbackText: string }) {
+    const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+
+    useEffect(() => {
+        try {
+            setPdfUrl(`data:application/pdf;base64,${pdfPageBase64}`);
+        } catch (error) {
+            console.error('Failed to render PDF page preview:', error);
+            setPdfUrl(null);
+        }
+    }, [pdfPageBase64]);
+
+    if (!pdfUrl) {
+        return <span>{fallbackText}</span>;
+    }
+
+    return (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-[hsl(var(--surface-soft)/0.48)]">
+            <iframe
+                title="PDF page"
+                src={`${pdfUrl}#view=FitH&toolbar=0&navpanes=0`}
+                className="h-[62vh] w-full"
+            />
         </div>
     );
 }

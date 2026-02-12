@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         showConnect({
             appDetails: {
                 name: 'Stackpad',
-                icon: window.location.origin + '/favicon.ico',
+                icon: window.location.origin + '/icon.svg',
             },
             redirectTo: '/',
             onFinish: () => {

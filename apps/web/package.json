@@ -8,19 +8,19 @@
     "start": "next start",
     "lint": "next lint"
   },
-  "dependencies": {
-    "@stackpad/shared": "*",
-    "@stackpad/x402-client": "*",
-    "@stacks/connect": "^7.8.2",
-    "@stacks/network": "^7.3.1",
-    "@stacks/transactions": "^6.13.0",
-    "@tailwindcss/postcss": "^4.1.18",
-    "autoprefixer": "^10.4.24",
-    "framer-motion": "^11.0.3",
-    "next": "^15.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
+    "dependencies": {
+        "@stackpad/shared": "*",
+        "@stackpad/x402-client": "*",
+        "@stacks/connect": "^7.8.2",
+        "@stacks/network": "^7.3.1",
+        "@stacks/transactions": "^6.13.0",
+        "@tailwindcss/postcss": "^4.1.18",
+        "autoprefixer": "^10.4.24",
+        "framer-motion": "^11.0.3",
+        "next": "^15.3.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0"
+    },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^19",

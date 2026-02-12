@@ -10,8 +10,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { BrandLogo } from '@/components/BrandLogo';
 
-const DEFAULT_COVER_IMAGE = '/default-cover.svg';
+const DEFAULT_COVER_BASE = 'https://picsum.photos/seed';
 
 function shortAddress(address?: string) {
     if (!address) {
@@ -51,7 +52,7 @@ export default function LibraryPage() {
             <div className="app-shell">
                 <header className="topbar">
                     <div className="layout-wrap flex h-20 items-center justify-between">
-                        <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                        <BrandLogo />
                         <ThemeToggle />
                     </div>
                 </header>
@@ -74,7 +75,7 @@ export default function LibraryPage() {
         <div className="app-shell">
             <header className="topbar">
                 <div className="layout-wrap flex h-20 items-center justify-between">
-                    <Link href="/" className="font-display text-3xl tracking-tight text-slate-900">Stackpad</Link>
+                    <BrandLogo />
                     <div className="flex items-center gap-3">
                         <Link href="/author" className="btn-secondary">Author</Link>
                         <ThemeToggle />
@@ -133,7 +134,7 @@ export default function LibraryPage() {
                                     <article className="card h-full transition-shadow duration-200 group-hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
                                         <div className="relative h-64 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
                                             <Image
-                                                src={book.coverImageUrl || DEFAULT_COVER_IMAGE}
+                                                src={book.coverImageUrl || defaultCoverForBook(book.id)}
                                                 alt={book.title}
                                                 fill
                                                 unoptimized
@@ -157,4 +158,8 @@ export default function LibraryPage() {
             </main>
         </div>
     );
+}
+
+function defaultCoverForBook(bookId: number): string {
+    return `${DEFAULT_COVER_BASE}/stackpad-book-${bookId}/400/600`;
 }
