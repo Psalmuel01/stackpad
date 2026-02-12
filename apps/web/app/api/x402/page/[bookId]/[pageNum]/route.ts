@@ -21,7 +21,12 @@ export async function GET(
 ) {
     if (!CLIENT_PRIVATE_KEY) {
         return NextResponse.json(
-            { error: 'CLIENT_PRIVATE_KEY is not configured for strict x402 buyer mode' },
+            {
+                error: 'CLIENT_PRIVATE_KEY is not configured for strict x402 buyer mode',
+                diagnostics: {
+                    error: 'CLIENT_PRIVATE_KEY is not configured for strict x402 buyer mode',
+                },
+            },
             { status: 500 }
         );
     }
@@ -51,7 +56,11 @@ export async function GET(
         });
 
         if (initialResponse.status !== 402) {
-            return await forwardResponse(initialResponse, entitlementAddress, account.address);
+            return await forwardResponse(initialResponse, {
+                readerAddress: entitlementAddress,
+                buyerAddress: account.address,
+                httpStatus: initialResponse.status,
+            });
         }
 
         const paymentRequired = decodePaymentRequired(
@@ -64,6 +73,12 @@ export async function GET(
                     error: 'Invalid x402 payment-required response',
                     readerAddress: entitlementAddress,
                     buyerAddress: account.address,
+                    diagnostics: {
+                        readerAddress: entitlementAddress,
+                        buyerAddress: account.address,
+                        httpStatus: 402,
+                        error: 'Invalid x402 payment-required response',
+                    },
                 },
                 { status: 502 }
             );
@@ -76,6 +91,12 @@ export async function GET(
                     error: `No compatible payment option found for ${BUYER_NETWORK}`,
                     readerAddress: entitlementAddress,
                     buyerAddress: account.address,
+                    diagnostics: {
+                        readerAddress: entitlementAddress,
+                        buyerAddress: account.address,
+                        httpStatus: 402,
+                        error: `No compatible payment option found for ${BUYER_NETWORK}`,
+                    },
                 },
                 { status: 400 }
             );
@@ -85,6 +106,7 @@ export async function GET(
             ...accepted,
             maxTimeoutSeconds: accepted.maxTimeoutSeconds ?? 300,
         };
+        const requirementSummary = summarizeRequirement(acceptedPayment);
 
         const signedTransaction = await signStxPayment(acceptedPayment, account.privateKey);
         const resource = {
@@ -110,13 +132,22 @@ export async function GET(
             cache: 'no-store',
         });
 
-        return await forwardResponse(paidResponse, entitlementAddress, account.address);
+        return await forwardResponse(paidResponse, {
+            readerAddress: entitlementAddress,
+            buyerAddress: account.address,
+            paymentRequired: requirementSummary,
+            httpStatus: paidResponse.status,
+        });
     } catch (error) {
         return NextResponse.json(
             {
                 error: error instanceof Error ? error.message : 'Failed to process x402 payment',
                 readerAddress: entitlementAddress,
                 buyerAddress: account.address,
+                diagnostics: {
+                    readerAddress: entitlementAddress,
+                    buyerAddress: account.address,
+                },
             },
             { status: 500 }
         );
@@ -125,33 +156,63 @@ export async function GET(
 
 async function forwardResponse(
     response: Response,
-    readerAddress: string,
-    buyerAddress: string
+    context: {
+        readerAddress: string;
+        buyerAddress: string;
+        paymentRequired?: PaymentRequirementSummary;
+        httpStatus: number;
+    }
 ) {
     const body = await parseJson(response);
     const payment = decodePaymentResponse(response.headers.get('payment-response')) as SettlementResponseV2 | null;
+    const bodyRecord = asRecord(body);
+    const fallbackTx = asString(bodyRecord?.transaction);
+    const fallbackPayer = asString(bodyRecord?.payer);
+    const effectiveTx = payment?.transaction || fallbackTx;
+    const effectivePayer = payment?.payer || fallbackPayer;
+    const effectiveNetwork = payment?.network;
+    const responseError = asString(bodyRecord?.error) || `Request failed with status ${response.status}`;
+    const responseDetails = asString(bodyRecord?.details)
+        || asString(bodyRecord?.message)
+        || ((effectivePayer || effectiveTx)
+            ? `payer=${effectivePayer || 'unknown'} tx=${effectiveTx || 'unknown'}`
+            : undefined);
+
+    const diagnostics: AdapterDiagnostics = {
+        readerAddress: context.readerAddress,
+        buyerAddress: context.buyerAddress,
+        httpStatus: context.httpStatus,
+        paymentRequired: context.paymentRequired,
+        paymentResponse: (effectiveTx || effectivePayer || effectiveNetwork)
+            ? {
+                transaction: effectiveTx,
+                payer: effectivePayer,
+                network: effectiveNetwork,
+                success: payment?.success,
+            }
+            : undefined,
+        error: response.ok ? undefined : responseError,
+        details: response.ok ? undefined : responseDetails,
+    };
 
     if (response.ok) {
         return NextResponse.json({
             success: true,
             data: body,
             payment,
-            readerAddress,
-            buyerAddress,
+            readerAddress: context.readerAddress,
+            buyerAddress: context.buyerAddress,
+            diagnostics,
         });
     }
 
-    const bodyRecord = asRecord(body);
-    const transaction = asString(bodyRecord?.transaction);
-    const payer = asString(bodyRecord?.payer);
     return NextResponse.json(
         {
-            error: asString(bodyRecord?.error) || `Request failed with status ${response.status}`,
-            details: asString(bodyRecord?.details)
-                || asString(bodyRecord?.message)
-                || ((payer || transaction) ? `payer=${payer || 'unknown'} tx=${transaction || 'unknown'}` : undefined),
-            readerAddress,
-            buyerAddress,
+            error: responseError,
+            details: responseDetails,
+            readerAddress: context.readerAddress,
+            buyerAddress: context.buyerAddress,
+            diagnostics,
         },
         { status: response.status }
     );
@@ -216,6 +277,17 @@ function asString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }
 
+function summarizeRequirement(requirement: X402PaymentRequirement): PaymentRequirementSummary {
+    return {
+        amount: requirement.amount,
+        asset: requirement.asset,
+        network: requirement.network,
+        payTo: requirement.payTo,
+        maxTimeoutSeconds: requirement.maxTimeoutSeconds,
+        memo: requirement.extra?.memo,
+    };
+}
+
 interface X402PaymentRequired {
     x402Version: 2;
     resource?: {
@@ -236,4 +308,28 @@ interface X402PaymentRequirement {
     extra?: {
         memo?: string;
     };
+}
+
+interface PaymentRequirementSummary {
+    amount: string;
+    asset: string;
+    network: `stacks:${string}`;
+    payTo: string;
+    maxTimeoutSeconds?: number;
+    memo?: string;
+}
+
+interface AdapterDiagnostics {
+    readerAddress: string;
+    buyerAddress: string;
+    httpStatus: number;
+    paymentRequired?: PaymentRequirementSummary;
+    paymentResponse?: {
+        success?: boolean;
+        transaction?: string;
+        payer?: string;
+        network?: string;
+    };
+    error?: string;
+    details?: string;
 }

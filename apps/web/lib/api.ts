@@ -129,6 +129,7 @@ class ApiClient {
         details?: string;
         readerAddress?: string;
         buyerAddress?: string;
+        diagnostics?: X402Diagnostics;
     }> {
         const response = await fetch(
             `/api/x402/page/${bookId}/${pageNum}?readerAddress=${encodeURIComponent(userAddress)}`,
@@ -142,6 +143,7 @@ class ApiClient {
                 details: asString(data.details),
                 readerAddress: asString(data.readerAddress),
                 buyerAddress: asString(data.buyerAddress),
+                diagnostics: asDiagnostics(data.diagnostics),
             };
         }
 
@@ -155,6 +157,7 @@ class ApiClient {
             } | null | undefined) || null,
             readerAddress: asString(data.readerAddress),
             buyerAddress: asString(data.buyerAddress),
+            diagnostics: asDiagnostics(data.diagnostics),
         };
     }
 
@@ -196,6 +199,14 @@ function asString(value: unknown): string | undefined {
 
 function asPaymentRequirements(value: unknown): X402PaymentRequirement[] | undefined {
     return Array.isArray(value) ? (value as X402PaymentRequirement[]) : undefined;
+}
+
+function asDiagnostics(value: unknown): X402Diagnostics | undefined {
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+
+    return value as X402Diagnostics;
 }
 
 function asPaymentInstructions(value: unknown): {
@@ -281,4 +292,26 @@ interface AuthorEarningsResult {
         pages_sold: number;
         chapters_sold: number;
     }>;
+}
+
+export interface X402Diagnostics {
+    readerAddress?: string;
+    buyerAddress?: string;
+    httpStatus?: number;
+    paymentRequired?: {
+        amount?: string;
+        asset?: string;
+        network?: string;
+        payTo?: string;
+        maxTimeoutSeconds?: number;
+        memo?: string;
+    };
+    paymentResponse?: {
+        success?: boolean;
+        transaction?: string;
+        payer?: string;
+        network?: string;
+    };
+    error?: string;
+    details?: string;
 }

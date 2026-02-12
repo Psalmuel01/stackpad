@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import type { Book } from '@stackpad/shared';
 import { formatStxAmount } from '@stackpad/x402-client';
-import { apiClient } from '@/lib/api';
+import { apiClient, type X402Diagnostics } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
 
@@ -36,6 +36,7 @@ export default function ReaderPage() {
     const [isDimmed, setIsDimmed] = useState(false);
     const [isSettlingPayment, setIsSettlingPayment] = useState(false);
     const [buyerAddress, setBuyerAddress] = useState<string | null>(null);
+    const [x402Diagnostics, setX402Diagnostics] = useState<X402Diagnostics | null>(null);
 
     const requestCounterRef = useRef(0);
 
@@ -56,6 +57,36 @@ export default function ReaderPage() {
         void loadPageContent(currentPage);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [book, currentPage, userAddress]);
+
+    useEffect(() => {
+        if (!isAuthenticated) {
+            return;
+        }
+
+        let mounted = true;
+        void (async () => {
+            try {
+                const response = await fetch('/api/x402/buyer', { method: 'GET' });
+                if (!response.ok || !mounted) {
+                    return;
+                }
+                const data = await response.json() as { buyerAddress?: string };
+                if (data.buyerAddress && mounted) {
+                    setBuyerAddress(data.buyerAddress);
+                    setX402Diagnostics((prev) => ({
+                        ...(prev || {}),
+                        buyerAddress: data.buyerAddress,
+                    }));
+                }
+            } catch {
+                // Diagnostics enrichment only; ignore failures.
+            }
+        })();
+
+        return () => {
+            mounted = false;
+        };
+    }, [isAuthenticated]);
 
     async function loadBook() {
         try {
@@ -99,6 +130,21 @@ export default function ReaderPage() {
                     setPaymentInstructions(result.paymentInstructions);
                 }
 
+                const accepted = result.paymentRequiredV2?.accepts?.[0];
+                setX402Diagnostics({
+                    readerAddress: userAddress,
+                    buyerAddress: buyerAddress || undefined,
+                    paymentRequired: accepted ? {
+                        amount: accepted.amount,
+                        asset: accepted.asset,
+                        network: accepted.network,
+                        payTo: accepted.payTo,
+                        maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+                        memo: accepted.extra?.memo as string | undefined,
+                    } : undefined,
+                    httpStatus: 402,
+                });
+
                 setReaderState('locked');
                 setIsDimmed(true);
                 if (result.error) {
@@ -132,6 +178,9 @@ export default function ReaderPage() {
             if (result.buyerAddress) {
                 setBuyerAddress(result.buyerAddress);
             }
+            if (result.diagnostics) {
+                setX402Diagnostics(result.diagnostics);
+            }
 
             if (result.content) {
                 setPageContent(result.content.content);
@@ -146,12 +195,25 @@ export default function ReaderPage() {
             setIsDimmed(true);
             setShowPaymentModal(true);
             setStatusMessage(result.details || result.error || 'Payment settlement failed');
+            if (!result.diagnostics) {
+                setX402Diagnostics({
+                    readerAddress: result.readerAddress || userAddress,
+                    buyerAddress: result.buyerAddress || buyerAddress || undefined,
+                    error: result.error,
+                    details: result.details,
+                });
+            }
         } catch (error) {
             console.error('Strict x402 payment failed:', error);
             setReaderState('locked');
             setIsDimmed(true);
             setShowPaymentModal(true);
             setStatusMessage(error instanceof Error ? error.message : 'Payment settlement failed');
+            setX402Diagnostics({
+                readerAddress: userAddress,
+                buyerAddress: buyerAddress || undefined,
+                error: error instanceof Error ? error.message : 'Payment settlement failed',
+            });
         } finally {
             setIsSettlingPayment(false);
         }
@@ -282,36 +344,9 @@ export default function ReaderPage() {
                                 </article>
 
                                 {isDimmed && (
-                                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[rgba(248,246,241,0.76)] px-4 py-6">
-                                        <div className="absolute inset-0 rounded-2xl backdrop-blur-[1.5px]" />
-                                        <div className="surface relative z-10 w-full max-w-sm p-6 text-center md:p-8">
-                                            <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Locked page</p>
-                                            <h2 className="mt-3 font-display text-3xl text-slate-900">Unlock page {currentPage}</h2>
-                                            <p className="mt-4 text-xs leading-7 text-slate-600">
-                                                {paymentInstructions
-                                                    ? `Price: ${formatStxAmount(paymentInstructions.amount)} paid to ${paymentInstructions.recipient}.`
-                                                    : 'Payment details unavailable. Retry the request.'}
-                                            </p>
-
-                                            {statusMessage && (
-                                                <p className="mt-3 text-sm leading-6 text-slate-500">{statusMessage}</p>
-                                            )}
-
-                                            {buyerAddress && (
-                                                <p className="mt-2 text-xs leading-5 text-slate-500">
-                                                    Strict buyer account: {buyerAddress.slice(0, 6)}...{buyerAddress.slice(-4)}
-                                                </p>
-                                            )}
-
-                                            <div className="mt-6">
-                                                <button
-                                                    onClick={() => setShowPaymentModal(true)}
-                                                    disabled={!paymentInstructions}
-                                                    className="btn-primary w-full"
-                                                >
-                                                    Open payment
-                                                </button>
-                                            </div>
+                                    <div className="absolute inset-0 z-10 rounded-2xl bg-[rgba(248,246,241,0.72)] backdrop-blur-[1.5px]">
+                                        <div className="absolute left-4 top-4 rounded-full bg-white/85 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-slate-600">
+                                            Page locked
                                         </div>
                                     </div>
                                 )}
@@ -329,7 +364,16 @@ export default function ReaderPage() {
                         Previous
                     </button>
 
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Swipe horizontally</p>
+                    {readerState === 'locked' ? (
+                        <button
+                            onClick={() => setShowPaymentModal(true)}
+                            className="rounded-lg border border-slate-300 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-700 hover:bg-slate-50"
+                        >
+                            Unlock page
+                        </button>
+                    ) : (
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Swipe horizontally</p>
+                    )}
 
                     <button
                         onClick={goToNextPage}
@@ -339,6 +383,44 @@ export default function ReaderPage() {
                         Next
                     </button>
                 </div>
+
+                <section className="surface mt-6 rounded-2xl p-4 md:p-5">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">x402 diagnostics</p>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-600">
+                        <p className="break-all">
+                            Entitlement check address: {x402Diagnostics?.readerAddress ?? userAddress ?? 'n/a'}
+                        </p>
+                        <p className="break-all">
+                            Buyer signer account: {x402Diagnostics?.buyerAddress ?? buyerAddress ?? 'n/a'}
+                        </p>
+                        <p className="break-all">
+                            payTo (author): {x402Diagnostics?.paymentRequired?.payTo ?? paymentInstructions?.recipient ?? 'n/a'}
+                        </p>
+                        <p>
+                            amount: {x402Diagnostics?.paymentRequired?.amount
+                                ? formatStxAmount(x402Diagnostics.paymentRequired.amount)
+                                : paymentInstructions?.amount
+                                    ? formatStxAmount(paymentInstructions.amount)
+                                    : 'n/a'}
+                        </p>
+                        <p>
+                            network: {x402Diagnostics?.paymentRequired?.network ?? paymentInstructions?.network ?? 'n/a'}
+                        </p>
+                        <p>last HTTP status: {x402Diagnostics?.httpStatus ?? (readerState === 'locked' ? 402 : 'n/a')}</p>
+                        <p className="break-all">
+                            settlement tx: {x402Diagnostics?.paymentResponse?.transaction ?? 'n/a'}
+                        </p>
+                        <p className="break-all">
+                            settlement payer: {x402Diagnostics?.paymentResponse?.payer ?? 'n/a'}
+                        </p>
+                        {(x402Diagnostics?.error || x402Diagnostics?.details) && (
+                            <p className="break-all text-rose-700">
+                                last error: {x402Diagnostics?.error || x402Diagnostics?.details}
+                                {x402Diagnostics?.error && x402Diagnostics?.details ? ` (${x402Diagnostics.details})` : ''}
+                            </p>
+                        )}
+                    </div>
+                </section>
             </main>
 
             <AnimatePresence>
@@ -373,7 +455,7 @@ export default function ReaderPage() {
                                 <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
                                     <p className="text-sm text-slate-500">Price</p>
                                     <p className="mt-1 text-3xl font-display text-slate-900">{formatStxAmount(paymentInstructions.amount)}</p>
-                                    <p className="mt-3 break-all text-xs text-slate-500">Paid to: {paymentInstructions.recipient}</p>
+                                    <p className="mt-3 break-all text-sm text-slate-500">Paid to: {paymentInstructions.recipient}</p>
                                 </div>
 
                                 {statusMessage && (
