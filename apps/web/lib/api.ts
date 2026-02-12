@@ -6,6 +6,8 @@ import {
     parsePaymentRequiredHeader,
     formatPaymentProofHeader,
     type X402PaymentRequirement,
+    type X402V2PaymentRequired,
+    type PaymentProofData,
 } from '@stackpad/x402-client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -33,7 +35,7 @@ class ApiClient {
         bookId: number,
         pageNum: number,
         userAddress: string,
-        paymentProof?: string
+        paymentProof?: PaymentProofData
     ): Promise<{
         content?: ContentResponse;
         requires402?: boolean;
@@ -44,6 +46,7 @@ class ApiClient {
             network: string;
         };
         paymentRequirements?: X402PaymentRequirement[];
+        paymentRequiredV2?: X402V2PaymentRequired;
         error?: string;
         details?: string;
     }> {
@@ -95,6 +98,7 @@ class ApiClient {
                 requires402: true,
                 paymentInstructions,
                 paymentRequirements: effectiveRequirements,
+                paymentRequiredV2: v2PaymentRequired || undefined,
                 error: asString(errorBody?.error),
                 details: asString(errorBody?.details),
             };

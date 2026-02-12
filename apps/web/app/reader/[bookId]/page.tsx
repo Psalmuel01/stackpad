@@ -5,7 +5,12 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import type { Book } from '@stackpad/shared';
-import { formatStxAmount } from '@stackpad/x402-client';
+import {
+    encodeBase64,
+    formatStxAmount,
+    type PaymentProofData,
+    type X402V2PaymentRequired,
+} from '@stackpad/x402-client';
 import { apiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
@@ -23,6 +28,10 @@ interface PaymentInstructions {
     network: string;
 }
 
+interface PendingPayment extends PaymentProofData {
+    attempts: number;
+}
+
 export default function ReaderPage() {
     const params = useParams();
     const bookId = parseInt(params.bookId as string, 10);
@@ -36,7 +45,8 @@ export default function ReaderPage() {
 
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
-    const [pendingTxId, setPendingTxId] = useState<string | null>(null);
+    const [paymentRequiredV2, setPaymentRequiredV2] = useState<X402V2PaymentRequired | null>(null);
+    const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
     const [isDimmed, setIsDimmed] = useState(false);
 
     const requestCounterRef = useRef(0);
@@ -70,13 +80,13 @@ export default function ReaderPage() {
         }
     }
 
-    async function loadPageContent(pageNum: number, paymentProof?: string, retryAttempt = 0) {
+    async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData, retryAttempt = 0) {
         if (!userAddress) {
             return;
         }
 
         const requestId = ++requestCounterRef.current;
-        const proof = paymentProof || pendingTxId || undefined;
+        const proof = paymentProof || pendingPayment || undefined;
 
         setReaderState('loading');
         setStatusMessage(null);
@@ -93,7 +103,7 @@ export default function ReaderPage() {
                 setReaderState('ready');
                 setIsDimmed(false);
                 setShowPaymentModal(false);
-                setPendingTxId(null);
+                setPendingPayment(null);
                 setStatusMessage(null);
                 return;
             }
@@ -102,14 +112,33 @@ export default function ReaderPage() {
                 if (result.paymentInstructions) {
                     setPaymentInstructions(result.paymentInstructions);
                 }
+                if (result.paymentRequiredV2) {
+                    setPaymentRequiredV2(result.paymentRequiredV2);
+                }
 
                 setIsDimmed(true);
 
                 if (proof) {
+                    const details = `${result.error || ''} ${result.details || ''}`.toLowerCase();
+                    const isTerminal =
+                        details.includes('recipient_mismatch')
+                        || details.includes('amount_insufficient')
+                        || details.includes('invalid_payment_signature')
+                        || details.includes('memo does not match')
+                        || details.includes('for different content');
+
+                    if (isTerminal) {
+                        setReaderState('locked');
+                        setStatusMessage(result.details || result.error || 'Payment was submitted but validation failed.');
+                        return;
+                    }
+
                     setShowPaymentModal(false);
+                    setPendingPayment(prev => prev ? { ...prev, attempts: retryAttempt + 1 } : prev);
+
                     if (retryAttempt < MAX_VERIFICATION_RETRIES) {
                         setReaderState('verifying');
-                        setStatusMessage('Payment submitted. Waiting for blockchain confirmation...');
+                        setStatusMessage('Payment submitted. Waiting for verification...');
                         window.setTimeout(() => {
                             void loadPageContent(pageNum, proof, retryAttempt + 1);
                         }, VERIFY_RETRY_DELAY_MS);
@@ -117,7 +146,7 @@ export default function ReaderPage() {
                     }
 
                     setReaderState('locked');
-                    setStatusMessage('Transaction is still pending. Retry verification, or wait for confirmation and try again.');
+                    setStatusMessage('Still waiting for confirmation. Use Retry Verification or refresh in a minute.');
                     return;
                 }
 
@@ -139,30 +168,41 @@ export default function ReaderPage() {
         }
     }
 
-    function handlePaymentComplete(txId: string) {
-        setPendingTxId(txId);
+    function handlePaymentComplete(payment: { txId: string; txRaw?: string }) {
+        const accepted = paymentRequiredV2?.accepts?.[0];
+        const paymentSignature = createPaymentSignature(payment.txRaw, accepted);
+        const proof: PendingPayment = {
+            txHash: payment.txId,
+            txRaw: payment.txRaw,
+            paymentSignature,
+            attempts: 0,
+        };
+
+        setPendingPayment(proof);
         setShowPaymentModal(false);
         setReaderState('verifying');
         setStatusMessage('Payment sent. Verifying transaction...');
-        void loadPageContent(currentPage, txId, 0);
+        void loadPageContent(currentPage, proof, 0);
     }
 
     function goToNextPage() {
         if (!book || currentPage >= book.totalPages) {
             return;
         }
-        setPendingTxId(null);
+        setPendingPayment(null);
         setPaymentInstructions(null);
-        setCurrentPage((prev) => prev + 1);
+        setPaymentRequiredV2(null);
+        setCurrentPage(prev => prev + 1);
     }
 
     function goToPrevPage() {
         if (currentPage <= 1) {
             return;
         }
-        setPendingTxId(null);
+        setPendingPayment(null);
         setPaymentInstructions(null);
-        setCurrentPage((prev) => prev - 1);
+        setPaymentRequiredV2(null);
+        setCurrentPage(prev => prev - 1);
     }
 
     function handleDragEnd(info: PanInfo) {
@@ -278,13 +318,10 @@ export default function ReaderPage() {
                                             <div className="filter blur-sm select-none opacity-50 pointer-events-none" aria-hidden="true">
                                                 <h3>Locked Preview</h3>
                                                 <p>
-                                                    This page is protected by x402 payment gating. Unlock access to continue reading the full text.
+                                                    This page is protected by x402 payment gating. Unlock access to continue reading.
                                                 </p>
                                                 <p>
-                                                    Payment is processed in your Stacks wallet and verified by transaction proof before content is delivered.
-                                                </p>
-                                                <p>
-                                                    If you already paid, verification may need a short delay while your transfer confirms on-chain.
+                                                    Payment is sent directly to the author address configured for this book.
                                                 </p>
                                             </div>
 
@@ -313,8 +350,8 @@ export default function ReaderPage() {
                                                     {readerState === 'verifying' ? (
                                                         <button
                                                             onClick={() => {
-                                                                if (pendingTxId) {
-                                                                    void loadPageContent(currentPage, pendingTxId, MAX_VERIFICATION_RETRIES);
+                                                                if (pendingPayment) {
+                                                                    void loadPageContent(currentPage, pendingPayment, MAX_VERIFICATION_RETRIES);
                                                                 }
                                                             }}
                                                             className="btn-secondary w-full"
@@ -386,4 +423,23 @@ export default function ReaderPage() {
             )}
         </div>
     );
+}
+
+function createPaymentSignature(
+    txRaw: string | undefined,
+    accepted?: X402V2PaymentRequired['accepts'][number]
+): string | undefined {
+    if (!txRaw || !accepted) {
+        return undefined;
+    }
+
+    const payload = {
+        x402Version: 2,
+        accepted,
+        payload: {
+            transaction: txRaw,
+        },
+    };
+
+    return encodeBase64(JSON.stringify(payload));
 }

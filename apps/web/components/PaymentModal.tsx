@@ -13,7 +13,7 @@ interface PaymentModalProps {
     recipient: string;
     memo: string;
     onClose: () => void;
-    onPaymentComplete: (txId: string) => void;
+    onPaymentComplete: (payment: { txId: string; txRaw?: string }) => void;
 }
 
 export function PaymentModal({
@@ -34,7 +34,10 @@ export function PaymentModal({
         const result = await initiatePayment(recipient, amount, memo);
 
         if (result.success && result.txId) {
-            onPaymentComplete(result.txId);
+            onPaymentComplete({
+                txId: result.txId,
+                txRaw: result.txRaw,
+            });
         } else {
             setError(result.error || 'Payment failed');
         }
@@ -95,6 +98,9 @@ export function PaymentModal({
                                     <div className="text-sm text-slate-600 dark:text-slate-400 mb-1">Payment Amount</div>
                                     <div className="text-3xl font-bold bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">
                                         {formatStxAmount(amount)}
+                                    </div>
+                                    <div className="text-xs mt-2 text-slate-500 dark:text-slate-400 break-all">
+                                        Recipient: {recipient}
                                     </div>
                                 </div>
                             </div>

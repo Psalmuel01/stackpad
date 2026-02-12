@@ -1,4 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
+import {
+    deserializeTransaction,
+    isTokenTransferPayload,
+    principalToString,
+    addressHashModeToVersion,
+    addressFromVersionHash,
+    addressToString,
+} from '@stacks/transactions';
 import { X402PaymentVerifier, networkToCAIP2, type PaymentRequirementsV2, type PaymentPayloadV2 } from 'x402-stacks';
 import { verifyPayment, recordPayment, hasExistingPayment } from '../services/payment-verifier';
 import pool from '../db/client';
@@ -14,11 +22,6 @@ export interface X402Request extends Request {
 const FACILITATOR_URL = process.env.FACILITATOR_URL || 'https://facilitator.stacksx402.com';
 const v2Verifier = new X402PaymentVerifier(FACILITATOR_URL);
 
-/**
- * x402 payment gate with dual support:
- * - V2 (docs): payment-required / payment-signature / payment-response via facilitator.
- * - Legacy: tx hash proof (x-payment-response / X-Payment-Proof).
- */
 export async function x402PaymentGate(
     req: X402Request,
     res: Response,
@@ -54,10 +57,36 @@ export async function x402PaymentGate(
             return;
         }
 
-        const paymentProof = getLegacyPaymentProofFromHeaders(req);
-        if (paymentProof) {
+        const legacyPaymentData = getLegacyPaymentDataFromHeaders(req);
+        if (legacyPaymentData) {
+            const verifiedRaw = legacyPaymentData.txRaw
+                ? verifyRawTokenTransfer(legacyPaymentData.txRaw, context)
+                : null;
+
+            if (verifiedRaw?.valid) {
+                req.readerAddress = verifiedRaw.payer;
+                await recordPayment(
+                    legacyPaymentData.txHash || verifiedRaw.txHash,
+                    verifiedRaw.payer,
+                    context.bookId,
+                    context.expectedAmount,
+                    context.pageNumber,
+                    context.chapterNumber
+                );
+                next();
+                return;
+            }
+
+            if (!legacyPaymentData.txHash) {
+                await send402Response(res, context, {
+                    error: 'Payment verification failed',
+                    details: verifiedRaw?.reason || 'invalid_payment_payload',
+                });
+                return;
+            }
+
             const verification = await verifyPayment(
-                paymentProof,
+                legacyPaymentData.txHash,
                 bookId,
                 pageNumber,
                 chapterNumber,
@@ -77,7 +106,7 @@ export async function x402PaymentGate(
 
             if (!verification.alreadyRecorded) {
                 await recordPayment(
-                    paymentProof,
+                    legacyPaymentData.txHash,
                     verification.readerAddress!,
                     verification.bookId!,
                     verification.amount!,
@@ -93,7 +122,7 @@ export async function x402PaymentGate(
         if (!req.readerAddress) {
             res.status(401).json({
                 error: 'Stacks address required',
-                message: 'Provide X-Stacks-Address for entitlement checks or payment-signature for x402 v2 settlement.',
+                message: 'Provide X-Stacks-Address for entitlement checks or payment-signature/payment proof headers.',
             });
             return;
         }
@@ -133,31 +162,45 @@ async function handleV2Payment(
         return;
     }
 
-    const settlement = await v2Verifier.settle(paymentPayload, {
+    const accepted = paymentPayload.accepted;
+    if (
+        accepted.amount !== context.v2Requirement.amount
+        || accepted.payTo !== context.v2Requirement.payTo
+        || accepted.network !== context.v2Requirement.network
+        || accepted.asset.toUpperCase() !== context.v2Requirement.asset.toUpperCase()
+    ) {
+        await send402Response(res, context, {
+            error: 'Payment verification failed',
+            details: 'invalid_payment_requirements',
+        });
+        return;
+    }
+
+    const rawVerification = verifyRawTokenTransfer(paymentPayload.payload.transaction, context);
+    if (!rawVerification?.valid) {
+        await send402Response(res, context, {
+            error: 'Payment verification failed',
+            details: rawVerification?.reason || 'invalid_payment_payload',
+        });
+        return;
+    }
+
+    const facilitatorVerification = await v2Verifier.verify(paymentPayload, {
         paymentRequirements: context.v2Requirement,
     });
 
-    if (!settlement.success) {
+    if (!facilitatorVerification.isValid && facilitatorVerification.invalidReason !== 'unexpected_verify_error') {
         await send402Response(res, context, {
             error: 'Payment verification failed',
-            details: settlement.errorReason || 'Facilitator settlement failed',
+            details: facilitatorVerification.invalidReason || 'facilitator_verify_failed',
         });
         return;
     }
 
-    if (!settlement.transaction) {
-        await send402Response(res, context, {
-            error: 'Payment verification failed',
-            details: 'Facilitator returned no transaction hash',
-        });
-        return;
-    }
-
-    req.readerAddress = settlement.payer || req.readerAddress;
-
+    req.readerAddress = rawVerification.payer;
     await recordPayment(
-        settlement.transaction,
-        req.readerAddress || 'unknown',
+        rawVerification.txHash,
+        rawVerification.payer,
         context.bookId,
         context.expectedAmount,
         context.pageNumber,
@@ -166,9 +209,9 @@ async function handleV2Payment(
 
     const paymentResponse = {
         success: true,
-        payer: settlement.payer,
-        transaction: settlement.transaction,
-        network: settlement.network,
+        payer: rawVerification.payer,
+        transaction: rawVerification.txHash,
+        network: context.v2Requirement.network,
     };
 
     res.setHeader('payment-response', Buffer.from(JSON.stringify(paymentResponse)).toString('base64'));
@@ -239,9 +282,6 @@ async function getBookPaymentContext(
     const amount = pageNumber !== undefined ? page_price : chapter_price;
     const memo = createPaymentMemo(bookId, pageNumber, chapterNumber);
     const caip2Network = networkToCAIP2((process.env.STACKS_NETWORK || 'testnet') as 'mainnet' | 'testnet');
-    const resourcePath = pageNumber !== undefined
-        ? `/api/content/${bookId}/page/${pageNumber}`
-        : `/api/content/${bookId}/chapter/${chapterNumber}`;
     const description = pageNumber !== undefined
         ? `Unlock page ${pageNumber}`
         : `Unlock chapter ${chapterNumber}`;
@@ -286,33 +326,67 @@ function decodePaymentSignature(header: string): PaymentPayloadV2 | null {
     }
 }
 
-function getLegacyPaymentProofFromHeaders(req: Request): string | undefined {
+function getLegacyPaymentDataFromHeaders(req: Request): LegacyPaymentData | undefined {
     const legacyProof = req.header('X-Payment-Proof');
-    if (legacyProof) {
-        return legacyProof;
-    }
-
     const xPaymentResponse = req.header('x-payment-response') || req.header('X-Payment-Response');
-    if (!xPaymentResponse) {
+
+    if (!legacyProof && !xPaymentResponse) {
         return undefined;
     }
 
+    let txHash = legacyProof || '';
+    let txRaw: string | undefined;
+
+    if (xPaymentResponse) {
+        try {
+            const parsed = JSON.parse(xPaymentResponse) as Record<string, unknown>;
+            txHash = txHash || getStringField(parsed, ['txHash', 'txId', 'transactionHash', 'transaction']) || '';
+            txRaw = getStringField(parsed, ['txRaw', 'rawTx', 'rawTransaction']);
+        } catch {
+            txRaw = undefined;
+        }
+    }
+
+    if (!txHash && !txRaw) {
+        return undefined;
+    }
+
+    return { txHash, txRaw };
+}
+
+function verifyRawTokenTransfer(txRaw: string, context: BookPaymentContext):
+    | { valid: true; txHash: string; payer: string }
+    | { valid: false; reason: string } {
     try {
-        const parsed = JSON.parse(xPaymentResponse) as Record<string, unknown>;
+        const tx = deserializeTransaction(txRaw);
+        const payload = tx.payload;
 
-        const rootTxHash = getStringField(parsed, ['txHash', 'txId', 'transactionHash', 'transaction']);
-        if (rootTxHash) {
-            return rootTxHash;
+        if (!isTokenTransferPayload(payload)) {
+            return { valid: false, reason: 'raw_tx_not_token_transfer' };
         }
 
-        const payload = parsed.payload;
-        if (payload && typeof payload === 'object') {
-            return getStringField(payload as Record<string, unknown>, ['txHash', 'txId', 'transactionHash', 'transaction']);
+        const recipient = principalToString(payload.recipient);
+        if (recipient !== context.authorAddress) {
+            return { valid: false, reason: 'recipient_mismatch' };
         }
 
-        return undefined;
+        if (payload.amount < context.expectedAmount) {
+            return { valid: false, reason: 'amount_insufficient' };
+        }
+
+        const memo = payload.memo?.content?.replace(/\u0000/g, '').trim() || '';
+        if (memo !== context.memo) {
+            return { valid: false, reason: 'memo_mismatch' };
+        }
+
+        const txHash = tx.txid();
+        const spendingCondition = tx.auth.spendingCondition;
+        const version = addressHashModeToVersion(spendingCondition.hashMode as never, tx.version);
+        const payer = addressToString(addressFromVersionHash(version, spendingCondition.signer));
+
+        return { valid: true, txHash, payer };
     } catch {
-        return undefined;
+        return { valid: false, reason: 'invalid_raw_transaction' };
     }
 }
 
@@ -360,4 +434,9 @@ interface BookPaymentContext {
     description: string;
     resourceUrl: string;
     v2Requirement: PaymentRequirementsV2;
+}
+
+interface LegacyPaymentData {
+    txHash: string;
+    txRaw?: string;
 }

@@ -41,6 +41,12 @@ export interface X402V2PaymentRequired {
     }>;
 }
 
+export interface PaymentProofData {
+    txHash: string;
+    txRaw?: string;
+    paymentSignature?: string;
+}
+
 /**
  * Parse payment instructions from HTTP 402 response headers
  */
@@ -117,6 +123,22 @@ function decodeBase64(value: string): string {
     throw new Error('No base64 decoder available');
 }
 
+export function encodeBase64(value: string): string {
+    const maybeBtoa = (globalThis as { btoa?: (input: string) => string }).btoa;
+    if (typeof maybeBtoa === 'function') {
+        return maybeBtoa(value);
+    }
+
+    const maybeBuffer = (globalThis as {
+        Buffer?: { from: (input: string, encoding?: string) => { toString: (encoding: string) => string } };
+    }).Buffer;
+    if (maybeBuffer) {
+        return maybeBuffer.from(value, 'utf-8').toString('base64');
+    }
+
+    throw new Error('No base64 encoder available');
+}
+
 /**
  * Check if response is a 402 Payment Required
  */
@@ -127,16 +149,24 @@ export function is402Response(response: Response): boolean {
 /**
  * Format payment proof header for retry request
  */
-export function formatPaymentProofHeader(txHash: string): Record<string, string> {
+export function formatPaymentProofHeader(proof: string | PaymentProofData): Record<string, string> {
+    const normalized = typeof proof === 'string' ? { txHash: proof } : proof;
     const payload = JSON.stringify({
         x402Version: 1,
-        txHash,
+        txHash: normalized.txHash,
+        txRaw: normalized.txRaw,
     });
 
-    return {
+    const headers: Record<string, string> = {
         'x-payment-response': payload,
-        'X-Payment-Proof': txHash,
+        'X-Payment-Proof': normalized.txHash,
     };
+
+    if (normalized.paymentSignature) {
+        headers['payment-signature'] = normalized.paymentSignature;
+    }
+
+    return headers;
 }
 
 /**

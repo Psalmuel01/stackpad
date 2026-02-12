@@ -8,6 +8,7 @@ import { STACKS_MAINNET, STACKS_TESTNET } from '@stacks/network';
 interface PaymentResult {
     success: boolean;
     txId?: string;
+    txRaw?: string;
     error?: string;
 }
 
@@ -41,6 +42,7 @@ export function usePayment() {
                     resolve({
                         success: true,
                         txId: data.txId,
+                        txRaw: data.txRaw,
                     });
                 },
                 onCancel: () => {
