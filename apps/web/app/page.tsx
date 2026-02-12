@@ -129,10 +129,10 @@ export default function Home() {
                                 ['5', 'Content unlocks instantly', 'The paid page/chapter returns with payment-response metadata.'],
                                 ['6', 'Entitlement is recorded', 'Unlocked access is remembered so the reader can continue seamlessly.'],
                             ].map(([step, title, detail]) => (
-                                <article key={step} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                <article key={step} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
                                     <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
                                     <h3 className="mt-2 text-lg font-medium text-slate-900">{title}</h3>
-                                    <p className="mt-2 text-sm leading-6 text-slate-800">{detail}</p>
+                                    <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>
                                 </article>
                             ))}
                         </div>

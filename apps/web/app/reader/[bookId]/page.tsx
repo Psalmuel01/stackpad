@@ -7,7 +7,7 @@ import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import { openSTXTransfer } from '@stacks/connect';
 import type { Book } from '@stackpad/shared';
 import { formatStxAmount, type PaymentProofData } from '@stackpad/x402-client';
-import { apiClient, type X402Diagnostics } from '@/lib/api';
+import { apiClient } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -41,7 +41,6 @@ export default function ReaderPage() {
     const [isDimmed, setIsDimmed] = useState(false);
     const [isSettlingPayment, setIsSettlingPayment] = useState(false);
     const [pendingPaymentProof, setPendingPaymentProof] = useState<PaymentProofData | null>(null);
-    const [x402Diagnostics, setX402Diagnostics] = useState<X402Diagnostics | null>(null);
 
     const requestCounterRef = useRef(0);
 
@@ -98,18 +97,6 @@ export default function ReaderPage() {
                 setShowPaymentModal(false);
                 setStatusMessage(null);
                 setPendingPaymentProof(null);
-                if (paymentProof?.txHash) {
-                    setX402Diagnostics((prev) => ({
-                        ...(prev || {}),
-                        readerAddress: userAddress,
-                        paymentResponse: {
-                            ...(prev?.paymentResponse || {}),
-                            success: true,
-                            transaction: paymentProof.txHash,
-                            payer: userAddress,
-                        },
-                    }));
-                }
                 return;
             }
 
@@ -120,20 +107,6 @@ export default function ReaderPage() {
                 if (!paymentProof) {
                     setPendingPaymentProof(null);
                 }
-
-                const accepted = result.paymentRequiredV2?.accepts?.[0];
-                setX402Diagnostics({
-                    readerAddress: userAddress,
-                    paymentRequired: accepted ? {
-                        amount: accepted.amount,
-                        asset: accepted.asset,
-                        network: accepted.network,
-                        payTo: accepted.payTo,
-                        maxTimeoutSeconds: accepted.maxTimeoutSeconds,
-                        memo: accepted.extra?.memo as string | undefined,
-                    } : undefined,
-                    httpStatus: 402,
-                });
 
                 setReaderState('locked');
                 setIsDimmed(true);
@@ -180,10 +153,6 @@ export default function ReaderPage() {
                 setPendingPaymentProof(null);
             }
             setStatusMessage(message);
-            setX402Diagnostics({
-                readerAddress: userAddress,
-                error: message,
-            });
         } finally {
             setIsSettlingPayment(false);
         }
@@ -227,42 +196,12 @@ export default function ReaderPage() {
                 setShowPaymentModal(false);
                 setPendingPaymentProof(null);
                 setStatusMessage(null);
-                setX402Diagnostics((prev) => ({
-                    ...(prev || {}),
-                    readerAddress: userAddress,
-                    paymentResponse: {
-                        ...(prev?.paymentResponse || {}),
-                        success: true,
-                        transaction: paymentProof.txHash,
-                        payer: userAddress,
-                    },
-                }));
                 return;
             }
 
             if (!result.requires402) {
                 throw new Error(result.error || 'Failed to verify payment.');
             }
-
-            const accepted = result.paymentRequiredV2?.accepts?.[0];
-            setX402Diagnostics({
-                readerAddress: userAddress,
-                paymentRequired: accepted ? {
-                    amount: accepted.amount,
-                    asset: accepted.asset,
-                    network: accepted.network,
-                    payTo: accepted.payTo,
-                    maxTimeoutSeconds: accepted.maxTimeoutSeconds,
-                    memo: accepted.extra?.memo as string | undefined,
-                } : undefined,
-                httpStatus: 402,
-                error: result.error,
-                details: result.details,
-                paymentResponse: {
-                    transaction: paymentProof.txHash,
-                    payer: userAddress,
-                },
-            });
 
             if (isPendingVerification(result.error, result.details) && attempt < VERIFY_ATTEMPTS) {
                 setStatusMessage(`Payment submitted. Waiting for confirmation (${attempt}/${VERIFY_ATTEMPTS})...`);
@@ -407,7 +346,7 @@ export default function ReaderPage() {
 
                                 {isDimmed && (
                                     <div className="absolute inset-0 z-10 rounded-2xl bg-[rgba(248,246,241,0.72)] backdrop-blur-[1.5px]">
-                                        <div className="absolute left-4 top-4 rounded-full bg-white/85 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-slate-600">
+                                        <div className="absolute left-4 top-4 rounded-full border border-slate-200 bg-white/85 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-slate-700">
                                             Page locked
                                         </div>
                                     </div>
@@ -446,43 +385,6 @@ export default function ReaderPage() {
                     </button>
                 </div>
 
-                <section className="surface mt-6 rounded-2xl p-4 md:p-5">
-                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">x402 diagnostics</p>
-                    <div className="mt-3 grid gap-2 text-xs text-slate-600">
-                        <p className="break-all">
-                            Entitlement check address: {x402Diagnostics?.readerAddress ?? userAddress ?? 'n/a'}
-                        </p>
-                        <p className="break-all">
-                            payer wallet account: {x402Diagnostics?.paymentResponse?.payer ?? userAddress ?? 'n/a'}
-                        </p>
-                        <p className="break-all">
-                            payTo (author): {x402Diagnostics?.paymentRequired?.payTo ?? paymentInstructions?.recipient ?? 'n/a'}
-                        </p>
-                        <p>
-                            amount: {x402Diagnostics?.paymentRequired?.amount
-                                ? formatStxAmount(x402Diagnostics.paymentRequired.amount)
-                                : paymentInstructions?.amount
-                                    ? formatStxAmount(paymentInstructions.amount)
-                                    : 'n/a'}
-                        </p>
-                        <p>
-                            network: {x402Diagnostics?.paymentRequired?.network ?? paymentInstructions?.network ?? 'n/a'}
-                        </p>
-                        <p>last HTTP status: {x402Diagnostics?.httpStatus ?? (readerState === 'locked' ? 402 : 'n/a')}</p>
-                        <p className="break-all">
-                            settlement tx: {x402Diagnostics?.paymentResponse?.transaction ?? 'n/a'}
-                        </p>
-                        <p className="break-all">
-                            settlement payer: {x402Diagnostics?.paymentResponse?.payer ?? 'n/a'}
-                        </p>
-                        {(x402Diagnostics?.error || x402Diagnostics?.details) && (
-                            <p className="break-all text-rose-700">
-                                last error: {x402Diagnostics?.error || x402Diagnostics?.details}
-                                {x402Diagnostics?.error && x402Diagnostics?.details ? ` (${x402Diagnostics.details})` : ''}
-                            </p>
-                        )}
-                    </div>
-                </section>
             </main>
 
             <AnimatePresence>
@@ -517,7 +419,7 @@ export default function ReaderPage() {
                                 <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
                                     <p className="text-sm text-slate-500">Price</p>
                                     <p className="mt-1 text-3xl font-display text-slate-900">{formatStxAmount(paymentInstructions.amount)}</p>
-                                    <p className="mt-3 break-all text-sm text-slate-500">Paid to: {paymentInstructions.recipient}</p>
+                                    <p className="mt-3 break-all text-sm text-slate-600">Paid to: {paymentInstructions.recipient}</p>
                                 </div>
 
                                 {pendingPaymentProof?.txHash && (
