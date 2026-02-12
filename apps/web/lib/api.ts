@@ -12,6 +12,37 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+export type BundleType = 'single-page' | 'next-5-pages' | 'next-10-percent' | 'chapter';
+
+export interface ReaderBalance {
+    readerAddress: string;
+    availableBalance: string;
+    totalDeposited: string;
+    totalSpent: string;
+}
+
+export interface UnlockOption {
+    bundleType: BundleType;
+    label: string;
+    description: string;
+    startPage: number;
+    endPage: number;
+    chapterNumber?: number;
+    pageCount: number;
+    amount: string;
+    remainingPages: number;
+    effectiveAmount: string;
+    fullyUnlocked: boolean;
+}
+
+export interface UnlockPreview {
+    bookId: number;
+    pageNumber: number;
+    suggestedTopUp: string;
+    balance: ReaderBalance;
+    options: UnlockOption[];
+}
+
 class ApiClient {
     private baseUrl: string;
 
@@ -47,6 +78,7 @@ class ApiClient {
         };
         paymentRequirements?: X402PaymentRequirement[];
         paymentRequiredV2?: X402V2PaymentRequired;
+        unlockPreview?: UnlockPreview;
         error?: string;
         details?: string;
     }> {
@@ -99,6 +131,7 @@ class ApiClient {
                 paymentInstructions,
                 paymentRequirements: effectiveRequirements,
                 paymentRequiredV2: v2PaymentRequired || undefined,
+                unlockPreview: asUnlockPreview(errorBody?.unlockPreview),
                 error: asString(errorBody?.error),
                 details: asString(errorBody?.details),
             };
@@ -111,6 +144,130 @@ class ApiClient {
 
         const data = await response.json();
         return { content: data };
+    }
+
+    async getReaderBalance(readerAddress: string): Promise<ReaderBalance> {
+        const response = await fetch(`${this.baseUrl}/api/wallet/balance?address=${encodeURIComponent(readerAddress)}`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch balance');
+        }
+        const data = await response.json();
+        return data.balance as ReaderBalance;
+    }
+
+    async getUnlockPreview(readerAddress: string, bookId: number, pageNumber: number): Promise<UnlockPreview> {
+        const response = await fetch(
+            `${this.baseUrl}/api/wallet/unlock-options?address=${encodeURIComponent(readerAddress)}&bookId=${bookId}&pageNumber=${pageNumber}`
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch unlock options');
+        }
+
+        const data = await response.json();
+        return data.preview as UnlockPreview;
+    }
+
+    async getDepositIntent(readerAddress: string, minAmount?: string): Promise<{
+        recipient: string;
+        memo: string;
+        network: string;
+        recommendedAmount: string;
+    }> {
+        const query = new URLSearchParams({ address: readerAddress });
+        if (minAmount) {
+            query.set('minAmount', minAmount);
+        }
+
+        const response = await fetch(`${this.baseUrl}/api/wallet/deposit-intent?${query.toString()}`);
+        if (!response.ok) {
+            throw new Error('Failed to create deposit intent');
+        }
+
+        const data = await response.json();
+        return {
+            recipient: data.recipient,
+            memo: data.memo,
+            network: data.network,
+            recommendedAmount: data.recommendedAmount,
+        };
+    }
+
+    async claimDeposit(readerAddress: string, txHash: string): Promise<{
+        amount: string;
+        balance: ReaderBalance;
+        txHash: string;
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/wallet/claim-deposit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ readerAddress, txHash }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to claim deposit');
+        }
+
+        return {
+            amount: data.claim.amount,
+            balance: data.claim.balance,
+            txHash: data.claim.txHash,
+        };
+    }
+
+    async unlockBundle(
+        readerAddress: string,
+        bookId: number,
+        pageNumber: number,
+        bundleType: BundleType
+    ): Promise<{
+        debitedAmount: string;
+        alreadyUnlocked: boolean;
+        balance: ReaderBalance;
+        unlockedRange?: {
+            startPage: number;
+            endPage: number;
+            chapterNumber?: number;
+            pagesUnlocked: number;
+        };
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/wallet/unlock`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ readerAddress, bookId, pageNumber, bundleType }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to unlock content');
+        }
+
+        return data.result;
+    }
+
+    async requestWithdrawal(readerAddress: string, amount: string): Promise<{ requestId: number; balance: ReaderBalance }> {
+        const response = await fetch(`${this.baseUrl}/api/wallet/withdraw`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ readerAddress, amount }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to request withdrawal');
+        }
+
+        return {
+            requestId: data.requestId,
+            balance: data.balance,
+        };
     }
 
     async uploadBook(book: UploadBookInput, pages: UploadPageInput[]): Promise<{ bookId: number }> {
@@ -135,11 +292,22 @@ class ApiClient {
         const data = await response.json() as AuthorEarningsApiResponse;
         return {
             totalEarnings: BigInt(data.totalEarnings),
+            legacyEarnings: BigInt(data.legacyEarnings || '0'),
+            prepaidEarnings: BigInt(data.prepaidEarnings || '0'),
             bookEarnings: data.bookEarnings.map((b) => ({
                 ...b,
                 earnings: BigInt(b.earnings),
             })),
         };
+    }
+
+    async getAuthorAnalytics(authorAddress: string): Promise<AuthorAnalyticsResult> {
+        const response = await fetch(`${this.baseUrl}/api/author/analytics?address=${authorAddress}`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch analytics');
+        }
+        const data = await response.json();
+        return data.analytics as AuthorAnalyticsResult;
     }
 }
 
@@ -181,6 +349,19 @@ function asPaymentInstructions(value: unknown): {
     return undefined;
 }
 
+function asUnlockPreview(value: unknown): UnlockPreview | undefined {
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    if (!candidate.balance || !Array.isArray(candidate.options)) {
+        return undefined;
+    }
+
+    return candidate as unknown as UnlockPreview;
+}
+
 function requirementToInstructions(requirement: X402PaymentRequirement): {
     amount: string;
     recipient: string;
@@ -218,22 +399,64 @@ interface UploadPageInput {
 
 interface AuthorEarningsApiResponse {
     totalEarnings: string;
+    legacyEarnings?: string;
+    prepaidEarnings?: string;
     bookEarnings: Array<{
         book_id: number;
         title: string;
         earnings: string;
-        pages_sold: number;
-        chapters_sold: number;
+        unlock_events: number;
+        page_views: number;
+        active_readers: number;
     }>;
 }
 
 interface AuthorEarningsResult {
     totalEarnings: bigint;
+    legacyEarnings: bigint;
+    prepaidEarnings: bigint;
     bookEarnings: Array<{
         book_id: number;
         title: string;
         earnings: bigint;
-        pages_sold: number;
-        chapters_sold: number;
+        unlock_events: number;
+        page_views: number;
+        active_readers: number;
+    }>;
+}
+
+interface AuthorAnalyticsResult {
+    pagesReadPerWallet: Array<{
+        reader_address: string;
+        pages_read: number;
+        revenue_contributed: string;
+    }>;
+    completionRates: Array<{
+        book_id: number;
+        title: string;
+        readers: number;
+        average_completion_pct: string | number;
+        max_page_reached: number;
+        total_pages: number;
+    }>;
+    dropOffPoints: Array<{
+        book_id: number;
+        title: string;
+        page_number: number;
+        reader_count: number;
+    }>;
+    revenueHeatmap: Array<{
+        book_id: number;
+        title: string;
+        chapter_number: number;
+        revenue: string;
+        unlock_events: number;
+        readers: number;
+    }>;
+    topBooks: Array<{
+        book_id: number;
+        title: string;
+        revenue: string;
+        unique_readers: number;
     }>;
 }

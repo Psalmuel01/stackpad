@@ -1,42 +1,24 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import type { Book } from '@stackpad/shared';
-import {
-    encodeBase64,
-    formatStxAmount,
-    type PaymentProofData,
-    type X402V2PaymentRequired,
-} from '@stackpad/x402-client';
-import { apiClient } from '@/lib/api';
+import { formatStxAmount } from '@stackpad/x402-client';
+import { apiClient, type BundleType, type UnlockOption, type UnlockPreview } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { usePayment } from '@/hooks/usePayment';
 import { WalletConnect } from '@/components/WalletConnect';
-import { PaymentModal } from '@/components/PaymentModal';
 
-const VERIFY_RETRY_DELAY_MS = 3000;
-const MAX_VERIFICATION_RETRIES = 80;
-
-type ReaderState = 'idle' | 'loading' | 'locked' | 'verifying' | 'error' | 'ready';
-
-interface PaymentInstructions {
-    amount: string;
-    recipient: string;
-    memo: string;
-    network: string;
-}
-
-interface PendingPayment extends PaymentProofData {
-    attempts: number;
-}
+type ReaderState = 'idle' | 'loading' | 'locked' | 'unlocking' | 'depositing' | 'error' | 'ready';
 
 export default function ReaderPage() {
     const params = useParams();
     const bookId = parseInt(params.bookId as string, 10);
 
     const { isAuthenticated, userAddress, connectWallet } = useAuth();
+    const { initiatePayment, isPaying } = usePayment();
 
     const [book, setBook] = useState<Book | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -44,11 +26,10 @@ export default function ReaderPage() {
     const [readerState, setReaderState] = useState<ReaderState>('idle');
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-    const [showPaymentModal, setShowPaymentModal] = useState(false);
-    const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
-    const [paymentRequiredV2, setPaymentRequiredV2] = useState<X402V2PaymentRequired | null>(null);
-    const [pendingPayment, setPendingPayment] = useState<PendingPayment | null>(null);
     const [isDimmed, setIsDimmed] = useState(false);
+    const [showUnlockModal, setShowUnlockModal] = useState(false);
+    const [unlockPreview, setUnlockPreview] = useState<UnlockPreview | null>(null);
+    const [selectedBundle, setSelectedBundle] = useState<BundleType>('next-5-pages');
 
     const requestCounterRef = useRef(0);
 
@@ -70,6 +51,22 @@ export default function ReaderPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [book, currentPage, userAddress]);
 
+    const actionableOptions = useMemo(() => {
+        return (unlockPreview?.options || []).filter((option) => option.remainingPages > 0);
+    }, [unlockPreview]);
+
+    const selectedOption = useMemo(() => {
+        return actionableOptions.find((option) => option.bundleType === selectedBundle)
+            || actionableOptions[0]
+            || null;
+    }, [actionableOptions, selectedBundle]);
+
+    useEffect(() => {
+        if (actionableOptions.length > 0 && !actionableOptions.some((option) => option.bundleType === selectedBundle)) {
+            setSelectedBundle(actionableOptions[0].bundleType);
+        }
+    }, [actionableOptions, selectedBundle]);
+
     async function loadBook() {
         try {
             const bookData = await apiClient.getBook(bookId);
@@ -81,20 +78,19 @@ export default function ReaderPage() {
         }
     }
 
-    async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData, retryAttempt = 0) {
+    async function loadPageContent(pageNum: number) {
         if (!userAddress) {
             return;
         }
 
         const requestId = ++requestCounterRef.current;
-        const proof = paymentProof || pendingPayment || undefined;
 
         setReaderState('loading');
         setStatusMessage(null);
         setIsDimmed(false);
 
         try {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress, proof);
+            const result = await apiClient.getPage(bookId, pageNum, userAddress);
             if (requestId !== requestCounterRef.current) {
                 return;
             }
@@ -103,107 +99,135 @@ export default function ReaderPage() {
                 setPageContent(result.content.content);
                 setReaderState('ready');
                 setIsDimmed(false);
-                setShowPaymentModal(false);
-                setPendingPayment(null);
-                setStatusMessage(null);
+                setShowUnlockModal(false);
+                setUnlockPreview(null);
                 return;
             }
 
             if (result.requires402) {
-                if (result.paymentInstructions) {
-                    setPaymentInstructions(result.paymentInstructions);
-                }
-                if (result.paymentRequiredV2) {
-                    setPaymentRequiredV2(result.paymentRequiredV2);
-                }
-
-                setIsDimmed(true);
-
-                if (proof) {
-                    const details = `${result.error || ''} ${result.details || ''}`.toLowerCase();
-                    const isTerminal =
-                        details.includes('recipient_mismatch')
-                        || details.includes('amount_insufficient')
-                        || details.includes('invalid_payment_signature')
-                        || details.includes('memo does not match')
-                        || details.includes('for different content');
-
-                    if (isTerminal) {
-                        setReaderState('locked');
-                        setStatusMessage(result.details || result.error || 'Payment was submitted but validation failed.');
-                        return;
-                    }
-
-                    setShowPaymentModal(false);
-                    setPendingPayment(prev => prev ? { ...prev, attempts: retryAttempt + 1 } : prev);
-
-                    if (retryAttempt < MAX_VERIFICATION_RETRIES) {
-                        setReaderState('verifying');
-                        setStatusMessage('Payment submitted. Waiting for verification...');
-                        window.setTimeout(() => {
-                            void loadPageContent(pageNum, proof, retryAttempt + 1);
-                        }, VERIFY_RETRY_DELAY_MS);
-                        return;
-                    }
-
-                    setReaderState('locked');
-                    setStatusMessage('Still waiting for confirmation. Use Retry Verification or refresh in a minute.');
-                    return;
-                }
-
                 setReaderState('locked');
-                if (result.error) {
-                    const details = result.details ? ` (${result.details})` : '';
-                    setStatusMessage(`${result.error}${details}`);
+                setIsDimmed(true);
+                setStatusMessage(result.details || result.error || 'Balance required to continue reading.');
+
+                if (result.unlockPreview) {
+                    setUnlockPreview(result.unlockPreview);
+                } else {
+                    try {
+                        const preview = await apiClient.getUnlockPreview(userAddress, bookId, pageNum);
+                        if (requestId !== requestCounterRef.current) {
+                            return;
+                        }
+                        setUnlockPreview(preview);
+                    } catch (previewError) {
+                        console.error('Failed to load unlock preview:', previewError);
+                    }
                 }
-                setShowPaymentModal(true);
                 return;
             }
 
             setReaderState('error');
+            setStatusMessage(result.error || 'Failed to load page content');
             setPageContent(result.error || 'Failed to load page content');
         } catch (error) {
             console.error('Failed to load page:', error);
             setReaderState('error');
+            setStatusMessage('Failed to load page content');
             setPageContent('Failed to load page content');
         }
     }
 
-    function handlePaymentComplete(payment: { txId: string; txRaw?: string }) {
-        const accepted = paymentRequiredV2?.accepts?.[0];
-        const paymentSignature = createPaymentSignature(payment.txRaw, accepted);
-        const proof: PendingPayment = {
-            txHash: payment.txId,
-            txRaw: payment.txRaw,
-            paymentSignature,
-            attempts: 0,
-        };
+    async function refreshUnlockPreview() {
+        if (!userAddress) {
+            return;
+        }
 
-        setPendingPayment(proof);
-        setShowPaymentModal(false);
-        setReaderState('verifying');
-        setStatusMessage('Payment sent. Verifying transaction...');
-        void loadPageContent(currentPage, proof, 0);
+        try {
+            const preview = await apiClient.getUnlockPreview(userAddress, bookId, currentPage);
+            setUnlockPreview(preview);
+        } catch (error) {
+            console.error('Failed to refresh unlock options:', error);
+        }
+    }
+
+    async function handleUnlock(option: UnlockOption) {
+        if (!userAddress) {
+            return;
+        }
+
+        setReaderState('unlocking');
+        setStatusMessage('Unlocking content...');
+
+        try {
+            await apiClient.unlockBundle(userAddress, bookId, currentPage, option.bundleType);
+            await loadPageContent(currentPage);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unlock failed';
+            setReaderState('locked');
+            if (message === 'INSUFFICIENT_BALANCE') {
+                setStatusMessage('Insufficient prepaid balance. Add funds to continue.');
+            } else {
+                setStatusMessage(message);
+            }
+            await refreshUnlockPreview();
+        }
+    }
+
+    async function handleDeposit() {
+        if (!userAddress || !selectedOption) {
+            return;
+        }
+
+        const minAmount = unlockPreview?.suggestedTopUp && BigInt(unlockPreview.suggestedTopUp) > BigInt(0)
+            ? unlockPreview.suggestedTopUp
+            : selectedOption.effectiveAmount;
+
+        setReaderState('depositing');
+        setStatusMessage('Opening wallet for balance top-up...');
+
+        try {
+            const intent = await apiClient.getDepositIntent(userAddress, minAmount);
+            const paymentResult = await initiatePayment(
+                intent.recipient,
+                BigInt(intent.recommendedAmount),
+                intent.memo
+            );
+
+            if (!paymentResult.success || !paymentResult.txId) {
+                setReaderState('locked');
+                setStatusMessage(paymentResult.error || 'Deposit cancelled');
+                return;
+            }
+
+            setStatusMessage('Confirming deposit on Stacks...');
+            await apiClient.claimDeposit(userAddress, paymentResult.txId);
+            await refreshUnlockPreview();
+            setReaderState('locked');
+            setStatusMessage('Balance updated. Select an unlock bundle to continue.');
+        } catch (error) {
+            console.error('Deposit failed:', error);
+            setReaderState('locked');
+            setStatusMessage(error instanceof Error ? error.message : 'Deposit failed');
+        }
     }
 
     function goToNextPage() {
         if (!book || currentPage >= book.totalPages) {
             return;
         }
-        setPendingPayment(null);
-        setPaymentInstructions(null);
-        setPaymentRequiredV2(null);
-        setCurrentPage(prev => prev + 1);
+
+        setCurrentPage((prev) => prev + 1);
+        setUnlockPreview(null);
+        setShowUnlockModal(false);
     }
 
     function goToPrevPage() {
         if (currentPage <= 1) {
             return;
         }
-        setPendingPayment(null);
-        setPaymentInstructions(null);
-        setPaymentRequiredV2(null);
-        setCurrentPage(prev => prev - 1);
+
+        setCurrentPage((prev) => prev - 1);
+        setUnlockPreview(null);
+        setShowUnlockModal(false);
     }
 
     function handleDragEnd(info: PanInfo) {
@@ -227,7 +251,7 @@ export default function ReaderPage() {
                     <div className="surface w-full max-w-xl p-10 text-center md:p-12">
                         <h1 className="font-display text-4xl text-slate-900">Connect to read</h1>
                         <p className="mt-5 text-lg leading-8 text-slate-600">
-                            A connected wallet is required to request locked pages and submit x402 payment proof.
+                            A connected wallet is required for prepaid reading balance and unlock entitlements.
                         </p>
                         <div className="mt-10 flex justify-center">
                             <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
@@ -315,44 +339,38 @@ export default function ReaderPage() {
                                 </article>
 
                                 {isDimmed && (
-                                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[rgba(248,246,241,0.76)] px-4 py-6">
-                                        <div className="absolute inset-0 rounded-2xl backdrop-blur-[1.5px]" />
-                                        <div className="surface relative z-10 w-full max-w-sm p-6 text-center md:p-8">
+                                    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-[rgba(248,246,241,0.78)] px-4 py-6">
+                                        <div className="absolute inset-0 rounded-2xl backdrop-blur-[1.4px]" />
+                                        <div className="surface relative z-10 w-full max-w-md p-6 text-center md:p-8">
                                             <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Locked page</p>
-                                            <h2 className="mt-3 font-display text-3xl text-slate-900">
-                                                {readerState === 'verifying' ? 'Verifying payment' : `Unlock page ${currentPage}`}
-                                            </h2>
-                                            <p className="mt-4 text-sm leading-7 text-slate-600">
-                                                {paymentInstructions
-                                                    ? `Price: ${formatStxAmount(paymentInstructions.amount)} paid to ${paymentInstructions.recipient}.`
-                                                    : 'Payment details unavailable. Retry the request.'}
-                                            </p>
+                                            <h2 className="mt-3 font-display text-3xl text-slate-900">Top up and unlock</h2>
+
+                                            {unlockPreview && (
+                                                <p className="mt-4 text-sm leading-7 text-slate-600">
+                                                    Balance: {formatStxAmount(unlockPreview.balance.availableBalance)}
+                                                    {' · '}
+                                                    Lowest unlock: {formatStxAmount(actionableOptions[0]?.effectiveAmount || '0')}
+                                                </p>
+                                            )}
 
                                             {statusMessage && (
                                                 <p className="mt-3 text-sm leading-6 text-slate-500">{statusMessage}</p>
                                             )}
 
-                                            <div className="mt-6">
-                                                {readerState === 'verifying' ? (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (pendingPayment) {
-                                                                void loadPageContent(currentPage, pendingPayment, MAX_VERIFICATION_RETRIES);
-                                                            }
-                                                        }}
-                                                        className="btn-secondary w-full"
-                                                    >
-                                                        Retry verification
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => setShowPaymentModal(true)}
-                                                        disabled={!paymentInstructions}
-                                                        className="btn-primary w-full"
-                                                    >
-                                                        Open payment
-                                                    </button>
-                                                )}
+                                            <div className="mt-6 flex gap-3">
+                                                <button
+                                                    onClick={() => setShowUnlockModal(true)}
+                                                    className="btn-primary flex-1"
+                                                    disabled={!unlockPreview}
+                                                >
+                                                    Unlock options
+                                                </button>
+                                                <button
+                                                    onClick={refreshUnlockPreview}
+                                                    className="btn-secondary flex-1"
+                                                >
+                                                    Refresh
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -383,36 +401,92 @@ export default function ReaderPage() {
                 </div>
             </main>
 
-            {paymentInstructions && (
-                <PaymentModal
-                    isOpen={showPaymentModal}
-                    pageNumber={currentPage}
-                    amount={BigInt(paymentInstructions.amount)}
-                    recipient={paymentInstructions.recipient}
-                    memo={paymentInstructions.memo}
-                    onClose={() => setShowPaymentModal(false)}
-                    onPaymentComplete={handlePaymentComplete}
-                />
-            )}
+            <AnimatePresence>
+                {showUnlockModal && unlockPreview && (
+                    <>
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-40 bg-black/30"
+                            onClick={() => setShowUnlockModal(false)}
+                        />
+
+                        <div className="fixed inset-x-0 bottom-0 z-50 px-4 pb-6 md:inset-0 md:flex md:items-center md:justify-center md:pb-0">
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: 20 }}
+                                transition={{ duration: 0.2 }}
+                                className="surface mx-auto w-full max-w-xl rounded-3xl p-6 shadow-[0_16px_32px_rgba(15,23,42,0.12)]"
+                            >
+                                <div className="mb-6 flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Prepaid unlock</p>
+                                        <h3 className="mt-2 font-display text-3xl text-slate-900">Choose bundle</h3>
+                                        <p className="mt-2 text-sm text-slate-600">
+                                            Balance: {formatStxAmount(unlockPreview.balance.availableBalance)}
+                                        </p>
+                                    </div>
+                                    <button className="btn-secondary px-3" onClick={() => setShowUnlockModal(false)}>
+                                        Close
+                                    </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {actionableOptions.map((option) => {
+                                        const active = selectedOption?.bundleType === option.bundleType;
+                                        return (
+                                            <button
+                                                key={`${option.bundleType}-${option.startPage}-${option.endPage}`}
+                                                onClick={() => setSelectedBundle(option.bundleType)}
+                                                className={[
+                                                    'w-full rounded-2xl border px-4 py-4 text-left transition-colors',
+                                                    active ? 'border-[hsl(var(--accent))] bg-slate-50' : 'border-slate-200 bg-white hover:bg-slate-50',
+                                                ].join(' ')}
+                                            >
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <p className="font-medium text-slate-900">{option.label}</p>
+                                                    <p className="text-sm font-medium text-[hsl(var(--accent))]">
+                                                        {formatStxAmount(option.effectiveAmount)}
+                                                    </p>
+                                                </div>
+                                                <p className="mt-1 text-sm text-slate-600">{option.description}</p>
+                                                <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+                                                    Pages {option.startPage}-{option.endPage} · {option.remainingPages} locked remaining
+                                                </p>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="mt-6 flex flex-wrap gap-3">
+                                    <button
+                                        onClick={handleDeposit}
+                                        disabled={isPaying || readerState === 'depositing' || !selectedOption}
+                                        className="btn-secondary flex-1"
+                                    >
+                                        {isPaying || readerState === 'depositing' ? 'Opening wallet...' : 'Add balance'}
+                                    </button>
+                                    <button
+                                        onClick={() => selectedOption && void handleUnlock(selectedOption)}
+                                        disabled={readerState === 'unlocking' || !selectedOption}
+                                        className="btn-primary flex-1"
+                                    >
+                                        {readerState === 'unlocking' ? 'Unlocking...' : 'Unlock now'}
+                                    </button>
+                                </div>
+
+                                {unlockPreview.suggestedTopUp !== '0' && (
+                                    <p className="mt-3 text-xs text-slate-500">
+                                        Suggested top-up: {formatStxAmount(unlockPreview.suggestedTopUp)}
+                                    </p>
+                                )}
+                            </motion.div>
+                        </div>
+                    </>
+                )}
+            </AnimatePresence>
         </div>
     );
-}
-
-function createPaymentSignature(
-    txRaw: string | undefined,
-    accepted?: X402V2PaymentRequired['accepts'][number]
-): string | undefined {
-    if (!txRaw || !accepted) {
-        return undefined;
-    }
-
-    const payload = {
-        x402Version: 2,
-        accepted,
-        payload: {
-            transaction: txRaw,
-        },
-    };
-
-    return encodeBase64(JSON.stringify(payload));
 }

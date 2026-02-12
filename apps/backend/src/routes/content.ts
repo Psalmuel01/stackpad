@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { X402Request, x402PaymentGate } from '../middleware/x402';
 import pool from '../db/client';
+import { recordPageView } from '../services/prepaid';
 
 const router = Router();
 
@@ -36,6 +37,14 @@ router.get('/:bookId/page/:pageNum', async (req: X402Request, res: Response) => 
             }
 
             const page = result.rows[0];
+
+            if (req.readerAddress) {
+                try {
+                    await recordPageView(req.readerAddress, bookId, pageNum);
+                } catch (eventError) {
+                    console.warn('Failed to record page view event:', eventError);
+                }
+            }
 
             // Get next and previous page numbers
             const nextPage = await pool.query(

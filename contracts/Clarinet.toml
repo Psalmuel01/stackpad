@@ -14,6 +14,11 @@ epoch = 'latest'
 path = 'contracts/entitlement.clar'
 clarity_version = 4
 epoch = 'latest'
+
+[contracts.reading-wallet]
+path = 'contracts/reading-wallet.clar'
+clarity_version = 4
+epoch = 'latest'
 [repl.analysis]
 passes = ['check_checker']
 

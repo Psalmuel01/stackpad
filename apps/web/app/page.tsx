@@ -39,11 +39,11 @@ export default function Home() {
                     <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45 }} className="max-w-5xl">
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Readable by default</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            Long-form reading with precise pay-per-page access.
+                            Long-form reading with prepaid, progressive unlock access.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
                             Stackpad keeps interface noise low and content clarity high. Pages unlock through x402 payment
-                            gating on Stacks so readers pay only for what they open.
+                            gating on Stacks with a prepaid reading balance, so readers avoid constant wallet prompts.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
@@ -65,8 +65,8 @@ export default function Home() {
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
                             ['Immersive reader', 'Minimal top bar, swipe navigation, and generous serif typography for steady focus.'],
-                            ['x402 compliant', 'Locked content returns 402 and unlocks after verifiable Stacks payment proof.'],
-                            ['Author-owned payouts', 'Payment recipient is set per book and displayed clearly before checkout.'],
+                            ['x402 compliant', 'Locked content returns 402 with bundle unlock options and top-up requirements.'],
+                            ['Author-owned payouts', 'Author revenue is derived from actual page consumption and unlock events.'],
                         ].map(([title, detail]) => (
                             <motion.article key={title} {...fadeUp} className="card">
                                 <h2 className="font-display text-2xl text-slate-900">{title}</h2>
@@ -102,18 +102,18 @@ export default function Home() {
                         <motion.div {...fadeUp} className="surface p-8 md:p-10">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">x402 buyer path</p>
                             <ol className="mt-6 space-y-5 text-slate-700">
-                                <li className="text-lg leading-8">Request content and receive payment requirements when locked.</li>
-                                <li className="text-lg leading-8">Pay in wallet with clear amount, recipient, and memo details.</li>
-                                <li className="text-lg leading-8">Submit proof and continue automatically once verified.</li>
+                                <li className="text-lg leading-8">Request content and receive 402 unlock requirements when locked.</li>
+                                <li className="text-lg leading-8">Top up prepaid balance once, then choose page/chapter bundles.</li>
+                                <li className="text-lg leading-8">Unlock ranges instantly while backend verifies and tracks entitlement.</li>
                             </ol>
                         </motion.div>
 
                         <motion.div {...fadeUp} className="surface p-8 md:p-10">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">x402 seller path</p>
                             <ol className="mt-6 space-y-5 text-slate-700">
-                                <li className="text-lg leading-8">Define per-page pricing and author payout destination.</li>
-                                <li className="text-lg leading-8">Serve protected endpoints that return standards-based 402 payloads.</li>
-                                <li className="text-lg leading-8">Rely on backend verification before revealing gated content.</li>
+                                <li className="text-lg leading-8">Define page/chapter pricing and progressive bundle economics.</li>
+                                <li className="text-lg leading-8">Serve protected endpoints with standards-based 402 responses.</li>
+                                <li className="text-lg leading-8">Settle revenue from consumption events with transparent analytics.</li>
                             </ol>
                         </motion.div>
                     </div>

@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import booksRouter from './routes/books';
 import contentRouter from './routes/content';
 import authorRouter from './routes/author';
+import walletRouter from './routes/wallet';
 
 dotenv.config();
 
@@ -39,6 +40,7 @@ app.get('/health', (req, res) => {
 app.use('/api/books', booksRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/author', authorRouter);
+app.use('/api/wallet', walletRouter);
 
 // 404 handler
 app.use((req, res) => {

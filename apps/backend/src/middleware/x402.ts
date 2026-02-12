@@ -11,6 +11,7 @@ import { X402PaymentVerifier, networkToCAIP2, type PaymentRequirementsV2, type P
 import { verifyPayment, recordPayment, hasExistingPayment } from '../services/payment-verifier';
 import pool from '../db/client';
 import { createPaymentMemo } from '@stackpad/x402-client';
+import { getReadingWalletAddress, getUnlockPreview, hasReaderEntitlement } from '../services/prepaid';
 
 export interface X402Request extends Request {
     bookId?: number;
@@ -21,6 +22,7 @@ export interface X402Request extends Request {
 
 const FACILITATOR_URL = process.env.FACILITATOR_URL || 'https://facilitator.stacksx402.com';
 const v2Verifier = new X402PaymentVerifier(FACILITATOR_URL);
+const STACKS_NETWORK = (process.env.STACKS_NETWORK || 'testnet') as 'mainnet' | 'testnet';
 
 export async function x402PaymentGate(
     req: X402Request,
@@ -127,19 +129,20 @@ export async function x402PaymentGate(
             return;
         }
 
-        const alreadyPaid = await hasExistingPayment(
-            req.readerAddress,
-            bookId,
-            pageNumber,
-            chapterNumber
-        );
+        const alreadyPaid = pageNumber !== undefined
+            ? await hasReaderEntitlement(req.readerAddress, bookId, pageNumber)
+            : await hasExistingPayment(req.readerAddress, bookId, pageNumber, chapterNumber);
 
         if (alreadyPaid) {
             next();
             return;
         }
 
-        await send402Response(res, context);
+        const unlockPreview = pageNumber
+            ? await getUnlockPreview(req.readerAddress, bookId, pageNumber)
+            : undefined;
+
+        await send402Response(res, context, undefined, unlockPreview, req.readerAddress);
     } catch (error) {
         console.error('x402 middleware error:', error);
         res.status(500).json({ error: 'Payment gateway error' });
@@ -221,8 +224,12 @@ async function handleV2Payment(
 async function send402Response(
     res: Response,
     context: BookPaymentContext,
-    verificationError?: { error: string; details?: string }
+    verificationError?: { error: string; details?: string },
+    unlockPreview?: Awaited<ReturnType<typeof getUnlockPreview>>,
+    readerAddress?: string
 ): Promise<void> {
+    const topUpRequirement = await toTopUpRequirement(context, unlockPreview, readerAddress);
+
     const v2Payload = {
         x402Version: 2,
         resource: {
@@ -230,13 +237,13 @@ async function send402Response(
             description: context.description,
             mimeType: 'application/json',
         },
-        accepts: [context.v2Requirement],
+        accepts: [topUpRequirement],
     };
 
     const legacyInstructions = {
-        amount: context.amount,
-        recipient: context.authorAddress,
-        memo: context.memo,
+        amount: topUpRequirement.amount,
+        recipient: topUpRequirement.payTo,
+        memo: topUpRequirement.extra?.memo || context.memo,
         network: process.env.STACKS_NETWORK || 'testnet',
     };
 
@@ -244,7 +251,7 @@ async function send402Response(
         .set({
             'WWW-Authenticate': 'x402',
             'payment-required': Buffer.from(JSON.stringify(v2Payload)).toString('base64'),
-            'x-payment': JSON.stringify([toLegacyXPayment(context)]),
+            'x-payment': JSON.stringify([toLegacyXPayment(topUpRequirement, context)]),
             'X-Payment-Required': JSON.stringify(legacyInstructions),
         })
         .json({
@@ -255,6 +262,13 @@ async function send402Response(
             paymentInstructions: legacyInstructions,
             message: context.description,
             facilitatorUrl: FACILITATOR_URL,
+            flow: {
+                mode: 'prepaid-bundle',
+                topUpEndpoint: '/api/wallet/deposit-intent',
+                claimEndpoint: '/api/wallet/claim-deposit',
+                unlockEndpoint: '/api/wallet/unlock',
+            },
+            unlockPreview: unlockPreview ? serializeUnlockPreview(unlockPreview) : undefined,
         });
 }
 
@@ -281,7 +295,7 @@ async function getBookPaymentContext(
 
     const amount = pageNumber !== undefined ? page_price : chapter_price;
     const memo = createPaymentMemo(bookId, pageNumber, chapterNumber);
-    const caip2Network = networkToCAIP2((process.env.STACKS_NETWORK || 'testnet') as 'mainnet' | 'testnet');
+    const caip2Network = networkToCAIP2(STACKS_NETWORK);
     const description = pageNumber !== undefined
         ? `Unlock page ${pageNumber}`
         : `Unlock chapter ${chapterNumber}`;
@@ -390,26 +404,104 @@ function verifyRawTokenTransfer(txRaw: string, context: BookPaymentContext):
     }
 }
 
-function toLegacyXPayment(context: BookPaymentContext): Record<string, unknown> {
+function toLegacyXPayment(
+    requirement: PaymentRequirementsV2,
+    context: BookPaymentContext
+): Record<string, unknown> {
     return {
         x402Version: 1,
         scheme: 'exact',
-        network: context.v2Requirement.network,
+        network: requirement.network,
         asset: 'stx',
-        maxAmountRequired: context.amount,
+        maxAmountRequired: requirement.amount,
         resource: context.pageNumber !== undefined
             ? `/api/content/${context.bookId}/page/${context.pageNumber}`
             : `/api/content/${context.bookId}/chapter/${context.chapterNumber}`,
         description: context.description,
         mimeType: 'application/json',
-        payTo: context.authorAddress,
+        payTo: requirement.payTo,
         maxTimeoutSeconds: 300,
         extra: {
             bookId: context.bookId,
             pageNumber: context.pageNumber,
             chapterNumber: context.chapterNumber,
-            memo: context.memo,
+            memo: requirement.extra?.memo || context.memo,
         },
+    };
+}
+
+async function toTopUpRequirement(
+    context: BookPaymentContext,
+    unlockPreview?: Awaited<ReturnType<typeof getUnlockPreview>>,
+    readerAddress?: string
+): Promise<PaymentRequirementsV2> {
+    const readingWallet = await getReadingWalletAddress();
+    if (!readingWallet) {
+        return context.v2Requirement;
+    }
+
+    const payableOptions = unlockPreview?.options.filter((option) => option.remainingPages > 0) || [];
+    const minUnlockCost = payableOptions.reduce<bigint | null>((min, option) => {
+        if (min === null || option.effectiveAmount < min) {
+            return option.effectiveAmount;
+        }
+        return min;
+    }, null);
+
+    const suggestedTopUp = unlockPreview?.suggestedTopUp || 0n;
+    const requestedAmount = suggestedTopUp > 0n
+        ? suggestedTopUp
+        : minUnlockCost || BigInt(context.amount);
+
+    const memo = createTopUpMemo(readerAddress, context.bookId, context.pageNumber, context.chapterNumber);
+
+    return {
+        scheme: 'exact',
+        network: networkToCAIP2(STACKS_NETWORK),
+        amount: requestedAmount.toString(),
+        asset: 'STX',
+        payTo: readingWallet,
+        maxTimeoutSeconds: 600,
+        extra: {
+            bookId: context.bookId,
+            pageNumber: context.pageNumber,
+            chapterNumber: context.chapterNumber,
+            memo,
+        },
+    };
+}
+
+function createTopUpMemo(
+    readerAddress: string | undefined,
+    bookId: number,
+    pageNumber?: number,
+    chapterNumber?: number
+): string {
+    const suffix = readerAddress ? readerAddress.slice(-6) : 'reader';
+    const target = pageNumber !== undefined
+        ? `p${pageNumber}`
+        : chapterNumber !== undefined
+            ? `c${chapterNumber}`
+            : 'content';
+    return `stackpad:topup:${bookId}:${target}:${suffix}`;
+}
+
+function serializeUnlockPreview(preview: Awaited<ReturnType<typeof getUnlockPreview>>) {
+    return {
+        bookId: preview.bookId,
+        pageNumber: preview.pageNumber,
+        suggestedTopUp: preview.suggestedTopUp.toString(),
+        balance: {
+            readerAddress: preview.balance.readerAddress,
+            availableBalance: preview.balance.availableBalance.toString(),
+            totalDeposited: preview.balance.totalDeposited.toString(),
+            totalSpent: preview.balance.totalSpent.toString(),
+        },
+        options: preview.options.map((option) => ({
+            ...option,
+            amount: option.amount.toString(),
+            effectiveAmount: option.effectiveAmount.toString(),
+        })),
     };
 }
 

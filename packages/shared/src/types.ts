@@ -101,3 +101,35 @@ export interface AuthorEarnings {
         chaptersSold: number;
     }[];
 }
+
+// Prepaid reading wallet and bundle unlock types
+export interface ReaderBalance {
+    readerAddress: string;
+    availableBalance: bigint | string;
+    totalDeposited: bigint | string;
+    totalSpent: bigint | string;
+}
+
+export type UnlockBundleType = 'single-page' | 'next-5-pages' | 'next-10-percent' | 'chapter';
+
+export interface UnlockOption {
+    bundleType: UnlockBundleType;
+    label: string;
+    description: string;
+    startPage: number;
+    endPage: number;
+    chapterNumber?: number;
+    pageCount: number;
+    amount: bigint | string;
+    remainingPages: number;
+    effectiveAmount: bigint | string;
+    fullyUnlocked: boolean;
+}
+
+export interface UnlockPreview {
+    bookId: number;
+    pageNumber: number;
+    suggestedTopUp: bigint | string;
+    balance: ReaderBalance;
+    options: UnlockOption[];
+}
