@@ -6,8 +6,8 @@ import Link from 'next/link';
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion';
 import { openSTXTransfer } from '@stacks/connect';
 import type { Book, ContentResponse } from '@stackpad/shared';
-import { formatStxAmount, type PaymentProofData } from '@stackpad/x402-client';
-import { apiClient } from '@/lib/api';
+import { formatStxAmount } from '@stackpad/x402-client';
+import { apiClient, type ReaderDepositIntent } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -16,15 +16,21 @@ import { BrandLogo } from '@/components/BrandLogo';
 
 type ReaderState = 'idle' | 'loading' | 'locked' | 'error' | 'ready';
 
-interface PaymentInstructions {
-    amount: string;
-    recipient: string;
-    memo: string;
-    network: string;
+interface InsufficientCreditState {
+    requiredAmount: string;
+    currentBalance: string;
+    shortfall: string;
+    topUp: {
+        recipient: string;
+        network: string;
+        suggestedAmount: string;
+    };
 }
 
-const VERIFY_ATTEMPTS = 18;
-const VERIFY_INTERVAL_MS = 2500;
+interface PendingDepositState {
+    intentId: string;
+    txHash: string;
+}
 
 export default function ReaderPage() {
     const params = useParams();
@@ -41,13 +47,15 @@ export default function ReaderPage() {
     const [readerState, setReaderState] = useState<ReaderState>('idle');
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-    const [showPaymentModal, setShowPaymentModal] = useState(false);
-    const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructions | null>(null);
     const [isDimmed, setIsDimmed] = useState(false);
-    const [isSettlingPayment, setIsSettlingPayment] = useState(false);
-    const [pendingPaymentProof, setPendingPaymentProof] = useState<PaymentProofData | null>(null);
-    const [pageTurnCue, setPageTurnCue] = useState<{ key: number; direction: 'next' | 'prev' } | null>(null);
+    const [creditBalance, setCreditBalance] = useState<string>('0');
+    const [insufficientCredit, setInsufficientCredit] = useState<InsufficientCreditState | null>(null);
+    const [showTopUpPanel, setShowTopUpPanel] = useState(false);
+    const [topUpAmount, setTopUpAmount] = useState('');
+    const [pendingDeposit, setPendingDeposit] = useState<PendingDepositState | null>(null);
+    const [isFunding, setIsFunding] = useState(false);
 
+    const [pageTurnCue, setPageTurnCue] = useState<{ key: number; direction: 'next' | 'prev' } | null>(null);
     const requestCounterRef = useRef(0);
     const pageTurnCounterRef = useRef(0);
     const pageTurnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,6 +67,7 @@ export default function ReaderPage() {
         }
 
         void loadBook();
+        void loadCreditBalance(userAddress);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bookId, isAuthenticated, userAddress]);
 
@@ -90,6 +99,15 @@ export default function ReaderPage() {
         }
     }
 
+    async function loadCreditBalance(address: string) {
+        try {
+            const result = await apiClient.getCreditBalance(address);
+            setCreditBalance(result.balance);
+        } catch (error) {
+            console.error('Failed to load reader balance:', error);
+        }
+    }
+
     function applyPagePayload(payload: ContentResponse) {
         setPageContent(payload.content);
         if (payload.renderType === 'pdf-page' && payload.pdfPageBase64) {
@@ -102,7 +120,7 @@ export default function ReaderPage() {
         setPagePdfBase64(null);
     }
 
-    async function loadPageContent(pageNum: number, paymentProof?: PaymentProofData) {
+    async function loadPageContent(pageNum: number) {
         if (!userAddress) {
             return;
         }
@@ -110,45 +128,45 @@ export default function ReaderPage() {
         const requestId = ++requestCounterRef.current;
 
         setReaderState('loading');
-        setStatusMessage(paymentProof ? 'Verifying payment and unlocking page...' : null);
+        setStatusMessage(null);
         setIsDimmed(false);
 
         try {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress, paymentProof);
+            const result = await apiClient.getPage(bookId, pageNum, userAddress);
             if (requestId !== requestCounterRef.current) {
                 return;
             }
 
             if (result.content) {
                 applyPagePayload(result.content);
+                if (typeof result.content.creditBalance === 'string') {
+                    setCreditBalance(result.content.creditBalance);
+                }
+
                 const pendingTurn = pendingButtonTurnRef.current;
                 if (pendingTurn) {
                     triggerPageTurn(pendingTurn);
                     pendingButtonTurnRef.current = null;
                 }
+
                 setReaderState('ready');
                 setIsDimmed(false);
-                setShowPaymentModal(false);
+                setShowTopUpPanel(false);
                 setStatusMessage(null);
-                setPendingPaymentProof(null);
+                setPendingDeposit(null);
+                setInsufficientCredit(null);
                 return;
             }
 
-            if (result.requires402) {
-                if (result.paymentInstructions) {
-                    setPaymentInstructions(result.paymentInstructions);
-                }
-                if (!paymentProof) {
-                    setPendingPaymentProof(null);
-                }
-
+            if (result.requires402 && result.insufficientCredit) {
+                const locked = result.insufficientCredit;
                 setReaderState('locked');
                 setIsDimmed(true);
-                if (result.error) {
-                    const details = result.details ? ` (${result.details})` : '';
-                    setStatusMessage(`${result.error}${details}`);
-                }
-                setShowPaymentModal(true);
+                setInsufficientCredit(locked);
+                setCreditBalance(locked.currentBalance);
+                setTopUpAmount(locked.topUp.suggestedAmount);
+                setShowTopUpPanel(true);
+                setStatusMessage(result.error || 'Insufficient credit balance for this page.');
                 return;
             }
 
@@ -167,66 +185,76 @@ export default function ReaderPage() {
         }
     }
 
-    async function settleWithReaderWallet() {
-        if (!userAddress || !paymentInstructions) {
+    async function startTopUp() {
+        if (!userAddress || !insufficientCredit) {
             return;
         }
 
-        setIsSettlingPayment(true);
-        setReaderState('loading');
-        setStatusMessage('Confirm payment in your wallet...');
-        setShowPaymentModal(false);
+        const normalizedAmount = parseMicroStx(topUpAmount);
+        if (!normalizedAmount || normalizedAmount <= BigInt(0)) {
+            pushToast({
+                tone: 'error',
+                title: 'Invalid top-up amount',
+                message: 'Enter a positive amount in microSTX.',
+            });
+            return;
+        }
 
-        let proof: PaymentProofData | null = null;
+        setIsFunding(true);
+        setStatusMessage('Preparing top-up request...');
+        setShowTopUpPanel(false);
 
         try {
-            proof = await requestWalletPayment(paymentInstructions);
-            setPendingPaymentProof(proof);
+            const intent = await apiClient.createDepositIntent(userAddress, normalizedAmount.toString());
+            setStatusMessage('Confirm top-up in your wallet...');
+            const txHash = await requestWalletTopUp(intent);
+            setPendingDeposit({
+                intentId: intent.intentId,
+                txHash,
+            });
+
             pushToast({
                 tone: 'info',
-                title: 'Payment submitted',
-                message: `Transaction ${proof.txHash.slice(0, 10)}... was sent. Confirming now.`,
+                title: 'Deposit submitted',
+                message: `Transaction ${txHash.slice(0, 10)}... submitted. Verifying now.`,
                 durationMs: 4200,
             });
-            await verifyAndUnlock(currentPage, proof);
+
+            await settleDepositAndRetry(intent.intentId, txHash);
         } catch (error) {
-            console.error('Wallet payment failed:', error);
+            console.error('Top-up failed:', error);
             setReaderState('locked');
             setIsDimmed(true);
-            setShowPaymentModal(true);
-            const message = error instanceof Error ? error.message : 'Payment failed';
-            if (!proof) {
-                setPendingPaymentProof(null);
-            }
+            setShowTopUpPanel(true);
+            const message = error instanceof Error ? error.message : 'Top-up failed';
             setStatusMessage(message);
             pushToast({
                 tone: 'error',
-                title: 'Payment failed',
+                title: 'Top-up failed',
                 message,
             });
         } finally {
-            setIsSettlingPayment(false);
+            setIsFunding(false);
         }
     }
 
-    async function verifyPendingPayment() {
-        if (!pendingPaymentProof) {
+    async function verifyPendingDeposit() {
+        if (!pendingDeposit || !userAddress) {
             return;
         }
 
-        setIsSettlingPayment(true);
-        setReaderState('loading');
-        setStatusMessage('Verifying pending payment...');
-        setShowPaymentModal(false);
+        setIsFunding(true);
+        setStatusMessage('Verifying pending top-up...');
+        setShowTopUpPanel(false);
 
         try {
-            await verifyAndUnlock(currentPage, pendingPaymentProof);
+            await settleDepositAndRetry(pendingDeposit.intentId, pendingDeposit.txHash);
         } catch (error) {
-            console.error('Pending payment verification failed:', error);
+            console.error('Pending top-up verification failed:', error);
             setReaderState('locked');
             setIsDimmed(true);
-            setShowPaymentModal(true);
-            const message = error instanceof Error ? error.message : 'Payment verification failed';
+            setShowTopUpPanel(true);
+            const message = error instanceof Error ? error.message : 'Top-up verification failed';
             setStatusMessage(message);
             pushToast({
                 tone: 'error',
@@ -234,53 +262,48 @@ export default function ReaderPage() {
                 message,
             });
         } finally {
-            setIsSettlingPayment(false);
+            setIsFunding(false);
         }
     }
 
-    async function verifyAndUnlock(pageNum: number, paymentProof: PaymentProofData) {
+    async function settleDepositAndRetry(intentId: string, txHash: string) {
         if (!userAddress) {
-            throw new Error('Wallet address not available for verification.');
+            throw new Error('Wallet address not available.');
         }
 
-        for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1) {
-            const result = await apiClient.getPage(bookId, pageNum, userAddress, paymentProof);
-
-            if (result.content) {
-                applyPagePayload(result.content);
-                const pendingTurn = pendingButtonTurnRef.current;
-                if (pendingTurn) {
-                    triggerPageTurn(pendingTurn);
-                    pendingButtonTurnRef.current = null;
-                }
-                setReaderState('ready');
-                setIsDimmed(false);
-                setShowPaymentModal(false);
-                setPendingPaymentProof(null);
-                setStatusMessage(null);
-                pushToast({
-                    tone: 'success',
-                    title: 'Payment confirmed',
-                    message: `Page ${pageNum} unlocked successfully.`,
-                });
-                return;
-            }
-
-            if (!result.requires402) {
-                throw new Error(result.error || 'Failed to verify payment.');
-            }
-
-            if (isPendingVerification(result.error, result.details) && attempt < VERIFY_ATTEMPTS) {
-                setStatusMessage(`Payment submitted. Waiting for confirmation (${attempt}/${VERIFY_ATTEMPTS})...`);
-                await sleep(VERIFY_INTERVAL_MS);
-                continue;
-            }
-
-            const details = result.details ? ` (${result.details})` : '';
-            throw new Error(result.error ? `${result.error}${details}` : 'Payment verification failed.');
+        const settlement = await apiClient.settleDeposit(userAddress, intentId, txHash);
+        if (settlement.status === 'pending') {
+            setPendingDeposit({ intentId, txHash });
+            setReaderState('locked');
+            setIsDimmed(true);
+            setShowTopUpPanel(true);
+            setStatusMessage('Top-up is still pending on-chain. Tap "Verify top-up" in a moment.');
+            return;
         }
 
-        throw new Error('Transaction is still pending. Tap "Verify payment" to keep checking without paying again.');
+        if (settlement.status === 'invalid') {
+            setPendingDeposit(null);
+            throw new Error(settlement.error || 'Deposit verification failed.');
+        }
+
+        if (settlement.status !== 'confirmed') {
+            throw new Error(settlement.error || 'Deposit verification failed.');
+        }
+
+        if (settlement.balance) {
+            setCreditBalance(settlement.balance);
+        }
+        setPendingDeposit(null);
+        setStatusMessage(null);
+        pushToast({
+            tone: 'success',
+            title: 'Credits added',
+            message: settlement.amountCredited
+                ? `${formatStxAmount(settlement.amountCredited)} credited to your reading balance.`
+                : 'Your reading balance was updated.',
+        });
+
+        await loadPageContent(currentPage);
     }
 
     function triggerPageTurn(direction: 'next' | 'prev') {
@@ -301,8 +324,6 @@ export default function ReaderPage() {
             return;
         }
         pendingButtonTurnRef.current = fromButton ? 'next' : null;
-        setPaymentInstructions(null);
-        setPendingPaymentProof(null);
         setCurrentPage((prev) => prev + 1);
     }
 
@@ -311,8 +332,6 @@ export default function ReaderPage() {
             return;
         }
         pendingButtonTurnRef.current = fromButton ? 'prev' : null;
-        setPaymentInstructions(null);
-        setPendingPaymentProof(null);
         setCurrentPage((prev) => prev - 1);
     }
 
@@ -338,7 +357,7 @@ export default function ReaderPage() {
                     <div className="surface w-full max-w-xl p-10 text-center md:p-12">
                         <h1 className="font-display text-4xl text-slate-900">Connect to read</h1>
                         <p className="mt-5 text-lg leading-8 text-slate-600">
-                            A connected wallet is required to load your reader identity for x402 content requests.
+                            A connected wallet is required to unlock reading credits and fetch protected pages.
                         </p>
                         <div className="mt-10 flex justify-center">
                             <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
@@ -380,6 +399,9 @@ export default function ReaderPage() {
                         <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-500">
                             Page {currentPage}{book ? ` of ${book.totalPages}` : ''}
                         </p>
+                    </div>
+                    <div className="hidden rounded-full border border-slate-300 bg-slate-50/70 px-3 py-1 text-xs font-medium text-slate-700 md:block">
+                        Credits: {formatStxAmount(creditBalance)}
                     </div>
                     <ThemeToggle />
                     <WalletConnect />
@@ -477,10 +499,10 @@ export default function ReaderPage() {
 
                     {readerState === 'locked' ? (
                         <button
-                            onClick={() => setShowPaymentModal(true)}
+                            onClick={() => setShowTopUpPanel(true)}
                             className="rounded-lg border border-slate-300 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-700 hover:bg-slate-50"
                         >
-                            Unlock page
+                            Add credits
                         </button>
                     ) : (
                         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Swipe horizontally</p>
@@ -494,17 +516,16 @@ export default function ReaderPage() {
                         Next
                     </button>
                 </div>
-
             </main>
 
             <AnimatePresence>
-                {showPaymentModal && paymentInstructions && (
+                {showTopUpPanel && insufficientCredit && (
                     <>
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            onClick={() => setShowPaymentModal(false)}
+                            onClick={() => setShowTopUpPanel(false)}
                             className="fixed inset-0 z-40 bg-black/40"
                         />
 
@@ -518,44 +539,70 @@ export default function ReaderPage() {
                             >
                                 <div className="mb-5 flex items-start justify-between">
                                     <div>
-                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Reader wallet payment</p>
-                                        <h2 className="mt-2 text-2xl font-display text-slate-900">Settle payment for page {currentPage}</h2>
+                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Reading credits</p>
+                                        <h2 className="mt-2 text-2xl font-display text-slate-900">Top up to continue page {currentPage}</h2>
                                     </div>
-                                    <button onClick={() => setShowPaymentModal(false)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
+                                    <button onClick={() => setShowTopUpPanel(false)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
                                         ×
                                     </button>
                                 </div>
 
                                 <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
-                                    <p className="text-sm text-slate-500">Price</p>
-                                    <p className="mt-1 text-3xl font-display text-slate-900">{formatStxAmount(paymentInstructions.amount)}</p>
-                                    <p className="mt-3 break-all text-sm text-slate-600">Paid to: {paymentInstructions.recipient}</p>
+                                    <div className="grid gap-3 text-sm text-slate-600">
+                                        <div className="flex items-center justify-between">
+                                            <span>Required for this page</span>
+                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.requiredAmount)}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span>Current balance</span>
+                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.currentBalance)}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between">
+                                            <span>Shortfall</span>
+                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.shortfall)}</span>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {pendingPaymentProof?.txHash && (
-                                    <p className="mb-4 break-all rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                                        Pending transaction: {pendingPaymentProof.txHash}
+                                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+                                    Top-up amount (microSTX)
+                                </label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    step={100}
+                                    value={topUpAmount}
+                                    onChange={(event) => setTopUpAmount(event.target.value)}
+                                    className="input-base"
+                                />
+                                <p className="mt-2 text-xs text-slate-500">
+                                    {topUpAmount ? `You are adding ${formatStxAmount(topUpAmount)} to your reading balance.` : 'Choose a top-up amount.'}
+                                </p>
+
+                                {pendingDeposit?.txHash && (
+                                    <p className="mt-4 break-all rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                        Pending top-up transaction: {pendingDeposit.txHash}
                                     </p>
                                 )}
 
                                 {statusMessage && (
-                                    <p className="mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                                    <p className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                                         {statusMessage}
                                     </p>
                                 )}
 
-                                <div className="flex gap-3">
-                                    <button onClick={() => setShowPaymentModal(false)} disabled={isSettlingPayment} className="btn-secondary flex-1">
+                                <div className="mt-5 flex gap-3">
+                                    <button onClick={() => setShowTopUpPanel(false)} disabled={isFunding} className="btn-secondary flex-1">
                                         Cancel
                                     </button>
                                     <button
-                                        onClick={() => void (pendingPaymentProof ? verifyPendingPayment() : settleWithReaderWallet())}
-                                        disabled={isSettlingPayment}
+                                        onClick={() => void (pendingDeposit ? verifyPendingDeposit() : startTopUp())}
+                                        disabled={isFunding}
                                         className="btn-primary flex-1"
                                     >
-                                        {isSettlingPayment
-                                            ? (pendingPaymentProof ? 'Verifying...' : 'Processing...')
-                                            : (pendingPaymentProof ? 'Verify payment' : 'Pay with wallet')}
+                                        {isFunding
+                                            ? (pendingDeposit ? 'Verifying...' : 'Processing...')
+                                            : (pendingDeposit ? 'Verify top-up' : 'Add credits')}
                                     </button>
                                 </div>
                             </motion.div>
@@ -594,33 +641,48 @@ function PdfPageEmbed({ pdfPageBase64, fallbackText }: { pdfPageBase64: string; 
     );
 }
 
-async function requestWalletPayment(instructions: PaymentInstructions): Promise<PaymentProofData> {
-    const network = toWalletNetwork(instructions.network);
-    const amount = BigInt(instructions.amount);
+async function requestWalletTopUp(intent: ReaderDepositIntent): Promise<string> {
+    const network = toWalletNetwork(intent.network);
+    const amount = BigInt(intent.amount);
 
-    return await new Promise<PaymentProofData>((resolve, reject) => {
+    return await new Promise<string>((resolve, reject) => {
         void openSTXTransfer({
             network,
-            recipient: instructions.recipient,
+            recipient: intent.recipient,
             amount,
-            memo: instructions.memo,
+            memo: intent.memo,
             onFinish: (response: unknown) => {
                 const record = response && typeof response === 'object'
                     ? response as Record<string, unknown>
                     : {};
                 const txHash = readTxHash(record);
-                const txRaw = typeof record.txRaw === 'string' && record.txRaw ? record.txRaw : undefined;
 
                 if (!txHash) {
                     reject(new Error('Wallet did not return a transaction hash.'));
                     return;
                 }
 
-                resolve(txRaw ? { txHash, txRaw } : { txHash });
+                resolve(txHash);
             },
-            onCancel: () => reject(new Error('Payment was cancelled in wallet.')),
+            onCancel: () => reject(new Error('Top-up transaction was cancelled in wallet.')),
         });
     });
+}
+
+function parseMicroStx(value: string): bigint | null {
+    if (!value.trim()) {
+        return null;
+    }
+
+    try {
+        const parsed = BigInt(value);
+        if (parsed <= BigInt(0)) {
+            return null;
+        }
+        return parsed;
+    } catch {
+        return null;
+    }
 }
 
 function toWalletNetwork(network: string): 'mainnet' | 'testnet' {
@@ -642,17 +704,4 @@ function readTxHash(response: Record<string, unknown>): string | null {
     }
 
     return null;
-}
-
-function isPendingVerification(error?: string, details?: string): boolean {
-    const combined = `${error || ''} ${details || ''}`.toLowerCase();
-    return combined.includes('transaction_pending')
-        || combined.includes('pending')
-        || combined.includes('mempool');
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
 }

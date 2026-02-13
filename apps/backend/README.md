@@ -2,7 +2,7 @@
 
 This is the Express.js backend for Stackpad. It handles:
 - Book metadata and content storage (PostgreSQL)
-- x402 Payment Protocol verification
+- Prepaid reader credit balances and atomic unlock deductions
 - Author dashboards and uploads
 
 ## Setup
@@ -17,6 +17,8 @@ This is the Express.js backend for Stackpad. It handles:
     ```bash
     cp .env.example .env
     ```
+    Required for prepaid credits:
+    - `STACKPAD_TREASURY_ADDRESS` (wallet that receives reader top-up transfers)
 
 3.  **Database Migration**:
     Initialize the database schema.
@@ -52,5 +54,8 @@ npm start
 
 -   `GET /api/books`: List all books
 -   `GET /api/books/:id`: Get book details
--   `GET /api/content/:bookId/page/:pageNum`: Get page content (requires payment headers for locked content)
+-   `GET /api/content/:bookId/page/:pageNum`: Get page content (deducts reader credits for locked pages)
+-   `GET /api/credits/balance?address=SP...`: Reader credit balance
+-   `POST /api/credits/deposit-intent`: Create top-up intent
+-   `POST /api/credits/settle`: Verify deposit tx and credit balance
 -   `POST /api/author/upload`: Upload a new book (Author only)

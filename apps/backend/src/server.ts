@@ -4,6 +4,8 @@ import * as dotenv from 'dotenv';
 import booksRouter from './routes/books';
 import contentRouter from './routes/content';
 import authorRouter from './routes/author';
+import creditsRouter from './routes/credits';
+import { startCreditWorkers } from './services/credit-workers';
 
 dotenv.config();
 
@@ -39,6 +41,7 @@ app.get('/health', (req, res) => {
 app.use('/api/books', booksRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/author', authorRouter);
+app.use('/api/credits', creditsRouter);
 
 // 404 handler
 app.use((req, res) => {
@@ -56,6 +59,7 @@ app.listen(PORT, () => {
     console.log(`🚀 Backend server running on http://localhost:${PORT}`);
     console.log('📚 Stackpad API ready');
     console.log(`🌐 Network: ${process.env.STACKS_NETWORK || 'testnet'}`);
+    startCreditWorkers();
 });
 
 export default app;

@@ -447,10 +447,17 @@ router.get('/earnings', async (req: Request, res: Response) => {
 
         // Get total earnings
         const totalResult = await pool.query(
-            `SELECT COALESCE(SUM(pl.amount), 0) as total_earnings
-       FROM payment_logs pl
-       JOIN books b ON b.id = pl.book_id
-       WHERE b.author_address = $1`,
+            `SELECT COALESCE(SUM(source.amount), 0) as total_earnings
+             FROM (
+                SELECT pl.amount::bigint AS amount
+                FROM payment_logs pl
+                JOIN books b ON b.id = pl.book_id
+                WHERE b.author_address = $1
+                UNION ALL
+                SELECT are.amount::bigint AS amount
+                FROM author_revenue_events are
+                WHERE are.author_address = $1
+             ) source`,
             [authorAddress]
         );
 
@@ -459,11 +466,25 @@ router.get('/earnings', async (req: Request, res: Response) => {
             `SELECT 
         b.id as book_id,
         b.title,
-        COALESCE(SUM(pl.amount), 0) as earnings,
-        COUNT(DISTINCT CASE WHEN pl.page_number IS NOT NULL THEN pl.id END) as pages_sold,
-        COUNT(DISTINCT CASE WHEN pl.chapter_number IS NOT NULL THEN pl.id END) as chapters_sold
+        COALESCE(SUM(events.amount), 0) as earnings,
+        COALESCE(SUM(events.pages_sold), 0) as pages_sold,
+        COALESCE(SUM(events.chapters_sold), 0) as chapters_sold
        FROM books b
-       LEFT JOIN payment_logs pl ON b.id = pl.book_id
+       LEFT JOIN (
+            SELECT
+                pl.book_id,
+                pl.amount::bigint as amount,
+                CASE WHEN pl.page_number IS NOT NULL THEN 1 ELSE 0 END as pages_sold,
+                CASE WHEN pl.chapter_number IS NOT NULL THEN 1 ELSE 0 END as chapters_sold
+            FROM payment_logs pl
+            UNION ALL
+            SELECT
+                are.book_id,
+                are.amount::bigint as amount,
+                CASE WHEN are.page_number IS NOT NULL THEN 1 ELSE 0 END as pages_sold,
+                CASE WHEN are.chapter_number IS NOT NULL THEN 1 ELSE 0 END as chapters_sold
+            FROM author_revenue_events are
+        ) events ON b.id = events.book_id
        WHERE b.author_address = $1
        GROUP BY b.id, b.title
        ORDER BY earnings DESC`,
