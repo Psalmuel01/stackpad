@@ -8,7 +8,6 @@ export interface Book {
     totalChapters: number;
     pagePrice: bigint | string;      // µSTX
     chapterPrice: bigint | string;   // µSTX
-    contractBookId?: number;
     createdAt: Date | string;
 }
 

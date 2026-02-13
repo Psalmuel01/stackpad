@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import {
     createDepositIntent,
+    getCreditFundingOptions,
     getReaderCreditBalance,
     reconcilePendingDepositIntents,
+    settleAuthorRevenueBatch,
     settleDepositIntent,
 } from '../services/credits';
 
@@ -21,10 +23,12 @@ router.get('/balance', async (req: Request, res: Response) => {
         }
 
         const balance = await getReaderCreditBalance(address);
+        const topUp = getCreditFundingOptions();
         res.json({
             success: true,
             walletAddress: address,
             balance: balance.toString(),
+            topUp,
         });
     } catch (error) {
         console.error('Failed to get credit balance:', error);
@@ -87,9 +91,30 @@ router.post('/settle', async (req: Request, res: Response) => {
             return;
         }
 
+        console.info('[x402] verifying deposit settlement', {
+            walletAddress,
+            intentId,
+            txHash: txHash || null,
+        });
+
         const settlement = await settleDepositIntent(walletAddress, intentId, txHash || undefined);
+        const network = toCaip2Network(process.env.STACKS_NETWORK || 'testnet');
 
         if (settlement.status === 'pending') {
+            const paymentResponse = {
+                success: false,
+                status: 'pending',
+                transaction: settlement.txHash || null,
+                payer: walletAddress,
+                network,
+            };
+            res.setHeader('payment-response', encodeBase64Json(paymentResponse));
+            console.info('[x402] verification pending', {
+                walletAddress,
+                intentId,
+                txHash: settlement.txHash || null,
+                network,
+            });
             res.status(202).json({
                 success: false,
                 status: 'pending',
@@ -100,6 +125,22 @@ router.post('/settle', async (req: Request, res: Response) => {
         }
 
         if (settlement.status === 'invalid') {
+            const paymentResponse = {
+                success: false,
+                status: 'invalid',
+                transaction: settlement.txHash || null,
+                payer: walletAddress,
+                network,
+                error: settlement.error || 'Deposit verification failed',
+            };
+            res.setHeader('payment-response', encodeBase64Json(paymentResponse));
+            console.info('[x402] verification invalid', {
+                walletAddress,
+                intentId,
+                txHash: settlement.txHash || null,
+                network,
+                error: settlement.error || 'Deposit verification failed',
+            });
             res.status(400).json({
                 success: false,
                 status: 'invalid',
@@ -108,6 +149,22 @@ router.post('/settle', async (req: Request, res: Response) => {
             });
             return;
         }
+
+        const paymentResponse = {
+            success: true,
+            status: 'confirmed',
+            transaction: settlement.txHash || null,
+            payer: walletAddress,
+            network,
+        };
+        res.setHeader('payment-response', encodeBase64Json(paymentResponse));
+        console.info('[x402] verification confirmed', {
+            walletAddress,
+            intentId,
+            txHash: settlement.txHash || null,
+            network,
+            amountCredited: settlement.amountCredited || null,
+        });
 
         res.json({
             success: true,
@@ -141,4 +198,44 @@ router.post('/reconcile', async (_req: Request, res: Response) => {
     }
 });
 
+/**
+ * POST /api/credits/settle-authors
+ * Manual trigger for author payout settlement (ops/debug).
+ */
+router.post('/settle-authors', async (req: Request, res: Response) => {
+    try {
+        const rawLimit = req.body?.limit;
+        const parsedLimit = typeof rawLimit === 'number'
+            ? rawLimit
+            : typeof rawLimit === 'string'
+                ? Number.parseInt(rawLimit, 10)
+                : undefined;
+        const limit = Number.isFinite(parsedLimit) && Number(parsedLimit) > 0
+            ? Math.floor(Number(parsedLimit))
+            : 500;
+
+        const result = await settleAuthorRevenueBatch(limit);
+        res.json({
+            success: true,
+            eventCount: result.eventCount,
+            totalAmount: result.totalAmount.toString(),
+        });
+    } catch (error) {
+        console.error('Failed to settle author payouts:', error);
+        res.status(500).json({
+            error: error instanceof Error ? error.message : 'Failed to settle author payouts',
+        });
+    }
+});
+
 export default router;
+
+function toCaip2Network(network: string): string {
+    return network === 'mainnet' || network === 'stacks:1'
+        ? 'stacks:1'
+        : 'stacks:2147483648';
+}
+
+function encodeBase64Json(payload: unknown): string {
+    return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}

@@ -45,19 +45,14 @@ router.post('/upload', async (req: Request, res: Response) => {
         const totalChapters = getChapterCount(normalizedPages.pages);
         const coverImageUrl = normalizeCoverUrl(book.coverImageUrl)
             || buildDefaultCoverImageUrl(book.authorAddress, book.title);
-        const contractBookId = normalizeOptionalInteger(book.contractBookId);
-        if (book.contractBookId !== undefined && book.contractBookId !== null && contractBookId === null) {
-            res.status(400).json({ error: 'Invalid request: contractBookId must be a positive integer' });
-            return;
-        }
 
         // Start transaction
         await client.query('BEGIN');
 
         // Insert book
         const bookResult = await client.query(
-            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price, contract_book_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO books (author_address, title, cover_image_url, total_pages, total_chapters, page_price, chapter_price)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
             [
                 book.authorAddress.trim(),
@@ -67,7 +62,6 @@ router.post('/upload', async (req: Request, res: Response) => {
                 totalChapters,
                 pagePrice.toString(),
                 chapterPrice.toString(),
-                contractBookId,
             ]
         );
 
@@ -120,7 +114,6 @@ router.get('/books', async (req: Request, res: Response) => {
                 total_chapters as "totalChapters",
                 page_price as "pagePrice",
                 chapter_price as "chapterPrice",
-                contract_book_id as "contractBookId",
                 created_at as "createdAt"
              FROM books
              WHERE author_address = $1
@@ -206,20 +199,6 @@ router.patch('/books/:bookId', async (req: Request, res: Response) => {
             updates.push(`chapter_price = $${params.length}`);
         }
 
-        if (req.body.contractBookId !== undefined) {
-            const normalizedBookId = normalizeOptionalInteger(req.body.contractBookId);
-            if (
-                req.body.contractBookId !== null
-                && req.body.contractBookId !== ''
-                && normalizedBookId === null
-            ) {
-                res.status(400).json({ error: 'contractBookId must be a positive integer or null' });
-                return;
-            }
-            params.push(normalizedBookId);
-            updates.push(`contract_book_id = $${params.length}`);
-        }
-
         if (updates.length === 0) {
             res.status(400).json({ error: 'No updates provided' });
             return;
@@ -239,7 +218,6 @@ router.patch('/books/:bookId', async (req: Request, res: Response) => {
                 total_chapters as "totalChapters",
                 page_price as "pagePrice",
                 chapter_price as "chapterPrice",
-                contract_book_id as "contractBookId",
                 created_at as "createdAt"`,
             params
         );
@@ -355,14 +333,6 @@ function normalizePositiveInteger(value: unknown): number | null {
     }
 
     return parsed;
-}
-
-function normalizeOptionalInteger(value: unknown): number | null {
-    if (value === undefined || value === null || value === '') {
-        return null;
-    }
-
-    return normalizePositiveInteger(value);
 }
 
 function toMicroStx(value: unknown): bigint | null {

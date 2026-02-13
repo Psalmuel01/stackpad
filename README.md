@@ -12,6 +12,7 @@ Readers unlock only the content they cross into. Authors receive STX directly to
 4. If insufficient, backend returns `402 Payment Required` with top-up details.
 5. Reader signs one top-up transfer from wallet.
 6. Backend verifies deposit on Stacks, credits internal balance, and reading continues.
+7. Backend settlement worker batches earnings and broadcasts treasury-signed payouts to authors.
 
 Notes:
 - No server-side buyer private key is required.
@@ -76,7 +77,9 @@ Backend (`apps/backend/.env`):
 - `STACKS_API_URL`
 - `FACILITATOR_URL` (used by strict `payment-signature` middleware path)
 - `STACKPAD_TREASURY_ADDRESS` (wallet receiving reader top-ups)
+- `STACKPAD_TREASURY_PRIVATE_KEY` (hex private key for treasury payout signer)
 - `DEFAULT_TOP_UP_MICROSTX` (suggested top-up amount in microSTX)
+- `AUTHOR_SETTLEMENT_INTERVAL_MS` (how often payout batching runs, default 60s)
 
 Frontend (`apps/web/.env.local`):
 - `NEXT_PUBLIC_API_URL`

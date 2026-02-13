@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import pool from '../db/client';
 import {
     chargeCreditsForChapter,
@@ -8,6 +8,49 @@ import {
 } from '../services/credits';
 
 const router = Router();
+
+/**
+ * GET /api/content/:bookId/progress?address=SP...
+ * Returns last read page for the given reader and book.
+ */
+router.get('/:bookId/progress', async (req, res: Response) => {
+    try {
+        const bookId = parseInt(req.params.bookId, 10);
+        const readerAddress = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+
+        if (Number.isNaN(bookId) || bookId < 1) {
+            res.status(400).json({ error: 'Invalid book ID' });
+            return;
+        }
+
+        if (!readerAddress) {
+            res.status(400).json({ error: 'Reader wallet address is required' });
+            return;
+        }
+
+        const progressLookup = await pool.query(
+            `SELECT last_page
+             FROM reader_book_progress
+             WHERE wallet_address = $1
+               AND book_id = $2`,
+            [readerAddress, bookId]
+        );
+
+        const lastPage = progressLookup.rows.length > 0
+            ? Number(progressLookup.rows[0].last_page)
+            : null;
+
+        res.json({
+            success: true,
+            bookId,
+            walletAddress: readerAddress,
+            lastPage,
+        });
+    } catch (error) {
+        console.error('Error fetching reading progress:', error);
+        res.status(500).json({ error: 'Failed to fetch reading progress' });
+    }
+});
 
 /**
  * GET /api/content/:bookId/page/:pageNum
@@ -85,7 +128,7 @@ router.get('/:bookId/page/:pageNum', async (req, res: Response) => {
             });
 
             if (access.status === 'insufficient') {
-                sendInsufficientCredit(res, access);
+                sendInsufficientCredit(req, res, access);
                 return;
             }
 
@@ -97,6 +140,10 @@ router.get('/:bookId/page/:pageNum', async (req, res: Response) => {
         }
 
         const rendered = parseStoredPageContent(page.content);
+
+        if (readerAddress) {
+            await upsertReaderProgress(readerAddress, bookId, page.page_number);
+        }
 
         res.json({
             success: true,
@@ -177,7 +224,7 @@ router.get('/:bookId/chapter/:chapterNum', async (req, res: Response) => {
             });
 
             if (access.status === 'insufficient') {
-                sendInsufficientCredit(res, access);
+                sendInsufficientCredit(req, res, access);
                 return;
             }
 
@@ -186,6 +233,14 @@ router.get('/:bookId/chapter/:chapterNum', async (req, res: Response) => {
         } else if (readerAddress) {
             const freeChapterBalance = await getReaderCreditBalance(readerAddress);
             creditBalance = freeChapterBalance.toString();
+        }
+
+        if (readerAddress) {
+            const lastPageInChapter = chapterLookup.rows
+                .map((row) => Number(row.page_number))
+                .filter((value) => Number.isInteger(value) && value > 0)
+                .reduce((max, value) => Math.max(max, value), 1);
+            await upsertReaderProgress(readerAddress, bookId, lastPageInChapter);
         }
 
         res.json({
@@ -247,7 +302,7 @@ function parseStoredPageContent(rawContent: string): {
     };
 }
 
-function sendInsufficientCredit(res: Response, access: CreditAccessInsufficient): void {
+function sendInsufficientCredit(req: Request, res: Response, access: CreditAccessInsufficient): void {
     if (!access.recipient) {
         res.status(500).json({
             success: false,
@@ -255,6 +310,19 @@ function sendInsufficientCredit(res: Response, access: CreditAccessInsufficient)
         });
         return;
     }
+
+    const paymentRequiredPayload = createPaymentRequiredPayload(req, access);
+    const accepted = paymentRequiredPayload.accepts[0];
+    console.info('[x402] payment-required issued', {
+        resource: paymentRequiredPayload.resource.url,
+        network: accepted.network,
+        amount: accepted.amount,
+        asset: accepted.asset,
+        payTo: accepted.payTo,
+        reader: req.header('X-Stacks-Address') || null,
+    });
+    res.setHeader('payment-required', encodeBase64Json(paymentRequiredPayload));
+    res.setHeader('WWW-Authenticate', 'x402');
 
     res.status(402).json({
         success: false,
@@ -269,4 +337,50 @@ function sendInsufficientCredit(res: Response, access: CreditAccessInsufficient)
             suggestedAmount: access.suggestedTopUpAmount,
         },
     });
+}
+
+function createPaymentRequiredPayload(req: Request, access: CreditAccessInsufficient) {
+    const host = req.get('host');
+    const protocol = req.protocol || 'http';
+    const resourceUrl = host
+        ? `${protocol}://${host}${req.originalUrl || req.path}`
+        : (req.originalUrl || req.path || '');
+
+    return {
+        x402Version: 2,
+        resource: {
+            url: resourceUrl,
+            description: 'Stackpad locked content access',
+        },
+        accepts: [
+            {
+                scheme: 'exact',
+                network: access.network,
+                amount: access.requiredAmount,
+                asset: 'STX',
+                payTo: access.recipient,
+                maxTimeoutSeconds: 300,
+            },
+        ],
+    };
+}
+
+function encodeBase64Json(payload: unknown): string {
+    return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+}
+
+async function upsertReaderProgress(walletAddress: string, bookId: number, pageNumber: number): Promise<void> {
+    if (!walletAddress || !Number.isInteger(bookId) || !Number.isInteger(pageNumber) || pageNumber < 1) {
+        return;
+    }
+
+    await pool.query(
+        `INSERT INTO reader_book_progress (wallet_address, book_id, last_page, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (wallet_address, book_id)
+         DO UPDATE SET
+            last_page = EXCLUDED.last_page,
+            updated_at = NOW()`,
+        [walletAddress, bookId, pageNumber]
+    );
 }

@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import * as dotenv from 'dotenv';
 import pool from '../db/client';
 import { transactionsApi } from './stacks';
+import { settleAuthorPayoutBatch } from './author-payouts';
 
 dotenv.config();
 
@@ -48,6 +49,12 @@ export interface CreditAccessInsufficient {
 }
 
 export type CreditAccessResult = CreditAccessGranted | CreditAccessInsufficient;
+
+export interface CreditFundingOptions {
+    recipient: string;
+    network: string;
+    suggestedAmount: string;
+}
 
 interface PageChargeInput {
     walletAddress: string;
@@ -666,60 +673,19 @@ export async function reconcilePendingDepositIntents(limit = 25): Promise<void> 
 }
 
 export async function settleAuthorRevenueBatch(limit = 500): Promise<{ eventCount: number; totalAmount: bigint }> {
-    const client = await pool.connect();
-    let rolledBack = false;
-    try {
-        await client.query('BEGIN');
-        const pending = await client.query(
-            `SELECT id, amount
-             FROM author_revenue_events
-             WHERE settled = FALSE
-             ORDER BY created_at ASC
-             LIMIT $1
-             FOR UPDATE SKIP LOCKED`,
-            [limit]
-        );
-
-        if (pending.rows.length === 0) {
-            await client.query('ROLLBACK');
-            rolledBack = true;
-            return { eventCount: 0, totalAmount: BigInt(0) };
-        }
-
-        const ids = pending.rows.map((row) => Number(row.id));
-        const totalAmount = pending.rows.reduce((sum, row) => sum + BigInt(String(row.amount ?? '0')), BigInt(0));
-
-        const batchInsert = await client.query(
-            `INSERT INTO author_settlement_batches (total_amount, event_count)
-             VALUES ($1, $2)
-             RETURNING id`,
-            [totalAmount.toString(), ids.length]
-        );
-        const batchId = Number(batchInsert.rows[0].id);
-
-        await client.query(
-            `UPDATE author_revenue_events
-             SET settled = TRUE,
-                 settled_at = NOW()
-             WHERE id = ANY($1::int[])`,
-            [ids]
-        );
-
-        await client.query('COMMIT');
-        return { eventCount: ids.length, totalAmount };
-    } catch (error) {
-        if (!rolledBack) {
-            await client.query('ROLLBACK');
-        }
-        console.error('Failed to settle author revenue batch:', error);
-        return { eventCount: 0, totalAmount: BigInt(0) };
-    } finally {
-        client.release();
-    }
+    return settleAuthorPayoutBatch(limit);
 }
 
 export function getDefaultTopUpAmount(requiredAmount: bigint): bigint {
     return requiredAmount > DEFAULT_TOP_UP_AMOUNT ? requiredAmount : DEFAULT_TOP_UP_AMOUNT;
+}
+
+export function getCreditFundingOptions(requiredAmount: bigint = BigInt(0)): CreditFundingOptions {
+    return {
+        recipient: TREASURY_ADDRESS,
+        network: toCaip2Network(STACKS_NETWORK),
+        suggestedAmount: getDefaultTopUpAmount(requiredAmount).toString(),
+    };
 }
 
 function insufficientCreditResult(requiredAmount: bigint, balance: bigint, shortfall: bigint): CreditAccessInsufficient {

@@ -41,6 +41,15 @@ export interface X402V2PaymentRequired {
     }>;
 }
 
+export interface X402V2PaymentResponse {
+    success: boolean;
+    status?: string;
+    transaction?: string | null;
+    payer?: string | null;
+    network?: string;
+    error?: string;
+}
+
 export interface PaymentProofData {
     txHash: string;
     txRaw?: string;
@@ -105,6 +114,31 @@ export function parsePaymentRequiredHeader(headers: Headers): X402V2PaymentRequi
         return parsed;
     } catch (error) {
         console.error('Failed to parse payment-required header:', error);
+        return null;
+    }
+}
+
+/**
+ * Parse payment-response header from x402 v2 (base64 JSON payload).
+ */
+export function parsePaymentResponseHeader(headers: Headers): X402V2PaymentResponse | null {
+    const encoded = headers.get('payment-response') || headers.get('x-payment-response');
+    if (!encoded) {
+        return null;
+    }
+
+    try {
+        const normalized = encoded.trim();
+        const json = normalized.startsWith('{')
+            ? normalized
+            : decodeBase64(normalized);
+        const parsed = JSON.parse(json) as X402V2PaymentResponse;
+        if (typeof parsed !== 'object' || parsed === null || typeof parsed.success !== 'boolean') {
+            return null;
+        }
+        return parsed;
+    } catch (error) {
+        console.error('Failed to parse payment-response header:', error);
         return null;
     }
 }

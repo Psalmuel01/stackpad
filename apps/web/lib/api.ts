@@ -1,5 +1,11 @@
 import type { Book, ContentResponse, BookListResponse } from '@stackpad/shared';
-import { is402Response } from '@stackpad/x402-client';
+import {
+    is402Response,
+    parsePaymentRequiredHeader,
+    parsePaymentResponseHeader,
+    type X402V2PaymentRequired,
+    type X402V2PaymentResponse,
+} from '@stackpad/x402-client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -30,6 +36,7 @@ class ApiClient {
         content?: ContentResponse;
         requires402?: boolean;
         insufficientCredit?: InsufficientCreditPayload;
+        paymentRequired?: X402V2PaymentRequired;
         error?: string;
         details?: string;
     }> {
@@ -42,6 +49,18 @@ class ApiClient {
         });
 
         if (is402Response(response)) {
+            const paymentRequired = parsePaymentRequiredHeader(response.headers);
+            if (paymentRequired?.accepts?.[0]) {
+                const accepted = paymentRequired.accepts[0];
+                console.info('[x402] payment-required header', {
+                    network: accepted.network,
+                    amount: accepted.amount,
+                    asset: accepted.asset,
+                    payTo: accepted.payTo,
+                    resource: paymentRequired.resource?.url,
+                });
+            }
+
             let errorBody: Record<string, unknown> | null = null;
             try {
                 errorBody = await response.json();
@@ -52,6 +71,7 @@ class ApiClient {
             return {
                 requires402: true,
                 insufficientCredit: asInsufficientCreditPayload(errorBody),
+                paymentRequired: paymentRequired || undefined,
                 error: asString(errorBody?.error),
                 details: asString(errorBody?.details),
             };
@@ -66,7 +86,7 @@ class ApiClient {
         return { content: data };
     }
 
-    async getCreditBalance(walletAddress: string): Promise<{ balance: string }> {
+    async getCreditBalance(walletAddress: string): Promise<{ balance: string; topUp?: CreditFundingPayload }> {
         const response = await fetch(
             `${this.baseUrl}/api/credits/balance?address=${encodeURIComponent(walletAddress)}`
         );
@@ -75,8 +95,36 @@ class ApiClient {
             throw new Error('Failed to fetch credit balance');
         }
 
-        const data = await response.json() as { balance: string };
-        return { balance: data.balance };
+        const data = await response.json() as {
+            balance: string;
+            topUp?: {
+                recipient: string;
+                network: string;
+                suggestedAmount: string;
+            };
+        };
+        return {
+            balance: data.balance,
+            topUp: data.topUp,
+        };
+    }
+
+    async getReadingProgress(
+        bookId: number,
+        walletAddress: string
+    ): Promise<{ lastPage: number | null }> {
+        const response = await fetch(
+            `${this.baseUrl}/api/content/${bookId}/progress?address=${encodeURIComponent(walletAddress)}`
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch reading progress');
+        }
+
+        const data = await response.json() as { lastPage?: number | null };
+        return {
+            lastPage: Number.isInteger(data.lastPage) ? Number(data.lastPage) : null,
+        };
     }
 
     async createDepositIntent(
@@ -120,7 +168,13 @@ class ApiClient {
             }),
         });
 
+        const paymentResponse = parsePaymentResponseHeader(response.headers);
+        if (paymentResponse) {
+            console.info('[x402] payment-response header', paymentResponse);
+        }
+
         const data = await response.json() as DepositSettlementResponse & { error?: string };
+        data.x402PaymentResponse = paymentResponse || undefined;
 
         if (!response.ok) {
             if (data.status === 'pending' || data.status === 'invalid') {
@@ -179,7 +233,6 @@ class ApiClient {
             coverImageUrl?: string | null;
             pagePrice?: string;
             chapterPrice?: string;
-            contractBookId?: number | null;
         }
     ): Promise<Book> {
         const response = await fetch(`${this.baseUrl}/api/author/books/${bookId}`, {
@@ -261,7 +314,6 @@ interface UploadBookInput {
     totalChapters: number;
     pagePrice: string;
     chapterPrice: string;
-    contractBookId?: number;
 }
 
 interface UploadPageInput {
@@ -310,6 +362,7 @@ interface DepositSettlementResponse {
     amountCredited?: string;
     balance?: string;
     error?: string;
+    x402PaymentResponse?: X402V2PaymentResponse;
 }
 
 interface InsufficientCreditPayload {
@@ -321,6 +374,12 @@ interface InsufficientCreditPayload {
         network: string;
         suggestedAmount: string;
     };
+}
+
+interface CreditFundingPayload {
+    recipient: string;
+    network: string;
+    suggestedAmount: string;
 }
 
 export type ReaderPageResult = Awaited<ReturnType<ApiClient['getPage']>>;

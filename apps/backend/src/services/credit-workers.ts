@@ -20,9 +20,17 @@ export function startCreditWorkers(): void {
     };
 
     const runSettlement = () => {
-        void settleAuthorRevenueBatch().catch((error) => {
-            console.error('Author settlement loop failed:', error);
-        });
+        void settleAuthorRevenueBatch()
+            .then((result) => {
+                if (result.eventCount > 0) {
+                    console.log(
+                        `[credits] author payout batches broadcast for ${result.eventCount} events (${result.totalAmount.toString()} microSTX)`
+                    );
+                }
+            })
+            .catch((error) => {
+                console.error('Author settlement loop failed:', error);
+            });
     };
 
     // Run immediately on startup so ops does not wait for the first interval tick.

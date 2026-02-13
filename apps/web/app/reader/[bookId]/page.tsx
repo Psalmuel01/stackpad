@@ -13,6 +13,7 @@ import { WalletConnect } from '@/components/WalletConnect';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useToast } from '@/components/ToastProvider';
 import { BrandLogo } from '@/components/BrandLogo';
+import { shortenAddress } from '@/lib/utils';
 
 type ReaderState = 'idle' | 'loading' | 'locked' | 'error' | 'ready';
 
@@ -32,6 +33,15 @@ interface PendingDepositState {
     txHash: string;
 }
 
+interface FundingOptions {
+    recipient: string;
+    network: string;
+    suggestedAmount: string;
+}
+
+const AUTO_VERIFY_INTERVAL_MS = 3500;
+const AUTO_VERIFY_MAX_ATTEMPTS = 90;
+
 export default function ReaderPage() {
     const params = useParams();
     const bookId = parseInt(params.bookId as string, 10);
@@ -50,6 +60,7 @@ export default function ReaderPage() {
     const [isDimmed, setIsDimmed] = useState(false);
     const [creditBalance, setCreditBalance] = useState<string>('0');
     const [insufficientCredit, setInsufficientCredit] = useState<InsufficientCreditState | null>(null);
+    const [fundingOptions, setFundingOptions] = useState<FundingOptions | null>(null);
     const [showTopUpPanel, setShowTopUpPanel] = useState(false);
     const [topUpAmount, setTopUpAmount] = useState('');
     const [pendingDeposit, setPendingDeposit] = useState<PendingDepositState | null>(null);
@@ -60,14 +71,17 @@ export default function ReaderPage() {
     const pageTurnCounterRef = useRef(0);
     const pageTurnTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingButtonTurnRef = useRef<'next' | 'prev' | null>(null);
+    const topUpAttemptRef = useRef(0);
+    const hasShownResumeToastRef = useRef(false);
 
     useEffect(() => {
         if (!isAuthenticated || !userAddress || Number.isNaN(bookId)) {
             return;
         }
 
-        void loadBook();
-        void loadCreditBalance(userAddress);
+        hasShownResumeToastRef.current = false;
+        setCurrentPage(1);
+        void initializeReader(userAddress);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bookId, isAuthenticated, userAddress]);
 
@@ -88,12 +102,42 @@ export default function ReaderPage() {
         };
     }, []);
 
-    async function loadBook() {
+    async function initializeReader(address: string) {
         try {
-            const bookData = await apiClient.getBook(bookId);
+            const [bookData, creditData, progressData] = await Promise.all([
+                apiClient.getBook(bookId),
+                apiClient.getCreditBalance(address),
+                apiClient.getReadingProgress(bookId, address),
+            ]);
+
             setBook(bookData);
+            setCreditBalance(creditData.balance);
+            if (creditData.topUp) {
+                setFundingOptions(creditData.topUp);
+                if (!topUpAmount) {
+                    setTopUpAmount(creditData.topUp.suggestedAmount);
+                }
+            }
+
+            const maxPage = Math.max(1, bookData.totalPages);
+            const resumePage = progressData.lastPage && progressData.lastPage > 0
+                ? Math.min(progressData.lastPage, maxPage)
+                : 1;
+
+            if (resumePage > 1) {
+                setCurrentPage(resumePage);
+                if (!hasShownResumeToastRef.current) {
+                    hasShownResumeToastRef.current = true;
+                    pushToast({
+                        tone: 'info',
+                        title: 'Resumed reading',
+                        message: `Continuing from page ${resumePage}.`,
+                        durationMs: 2800,
+                    });
+                }
+            }
         } catch (error) {
-            console.error('Failed to load book:', error);
+            console.error('Failed to initialize reader:', error);
             setReaderState('error');
             setStatusMessage('Book could not be loaded.');
         }
@@ -103,6 +147,9 @@ export default function ReaderPage() {
         try {
             const result = await apiClient.getCreditBalance(address);
             setCreditBalance(result.balance);
+            if (result.topUp) {
+                setFundingOptions(result.topUp);
+            }
         } catch (error) {
             console.error('Failed to load reader balance:', error);
         }
@@ -163,6 +210,7 @@ export default function ReaderPage() {
                 setReaderState('locked');
                 setIsDimmed(true);
                 setInsufficientCredit(locked);
+                setFundingOptions(locked.topUp);
                 setCreditBalance(locked.currentBalance);
                 setTopUpAmount(locked.topUp.suggestedAmount);
                 setShowTopUpPanel(true);
@@ -186,11 +234,26 @@ export default function ReaderPage() {
     }
 
     async function startTopUp() {
-        if (!userAddress || !insufficientCredit) {
+        if (!userAddress) {
             return;
         }
 
-        const normalizedAmount = parseMicroStx(topUpAmount);
+        const activeFunding = insufficientCredit?.topUp || fundingOptions;
+        if (!activeFunding) {
+            pushToast({
+                tone: 'error',
+                title: 'Funding unavailable',
+                message: 'Treasury funding details are missing. Please try again shortly.',
+            });
+            return;
+        }
+
+        const candidateAmount = topUpAmount.trim() ? topUpAmount : activeFunding.suggestedAmount;
+        if (!topUpAmount.trim()) {
+            setTopUpAmount(activeFunding.suggestedAmount);
+        }
+
+        const normalizedAmount = parseMicroStx(candidateAmount);
         if (!normalizedAmount || normalizedAmount <= BigInt(0)) {
             pushToast({
                 tone: 'error',
@@ -200,14 +263,21 @@ export default function ReaderPage() {
             return;
         }
 
+        const attemptId = ++topUpAttemptRef.current;
         setIsFunding(true);
         setStatusMessage('Preparing top-up request...');
-        setShowTopUpPanel(false);
+        setShowTopUpPanel(true);
 
         try {
             const intent = await apiClient.createDepositIntent(userAddress, normalizedAmount.toString());
+            if (isStaleTopUpAttempt(attemptId)) {
+                return;
+            }
             setStatusMessage('Confirm top-up in your wallet...');
             const txHash = await requestWalletTopUp(intent);
+            if (isStaleTopUpAttempt(attemptId)) {
+                return;
+            }
             setPendingDeposit({
                 intentId: intent.intentId,
                 txHash,
@@ -220,8 +290,12 @@ export default function ReaderPage() {
                 durationMs: 4200,
             });
 
-            await settleDepositAndRetry(intent.intentId, txHash);
+            setStatusMessage('Verifying payment via x402...');
+            await settleDepositAndRetry(intent.intentId, txHash, attemptId);
         } catch (error) {
+            if (isStaleTopUpAttempt(attemptId)) {
+                return;
+            }
             console.error('Top-up failed:', error);
             setReaderState('locked');
             setIsDimmed(true);
@@ -234,7 +308,9 @@ export default function ReaderPage() {
                 message,
             });
         } finally {
-            setIsFunding(false);
+            if (!isStaleTopUpAttempt(attemptId)) {
+                setIsFunding(false);
+            }
         }
     }
 
@@ -243,13 +319,17 @@ export default function ReaderPage() {
             return;
         }
 
+        const attemptId = ++topUpAttemptRef.current;
         setIsFunding(true);
-        setStatusMessage('Verifying pending top-up...');
-        setShowTopUpPanel(false);
+        setStatusMessage('Verifying pending top-up via x402...');
+        setShowTopUpPanel(true);
 
         try {
-            await settleDepositAndRetry(pendingDeposit.intentId, pendingDeposit.txHash);
+            await settleDepositAndRetry(pendingDeposit.intentId, pendingDeposit.txHash, attemptId);
         } catch (error) {
+            if (isStaleTopUpAttempt(attemptId)) {
+                return;
+            }
             console.error('Pending top-up verification failed:', error);
             setReaderState('locked');
             setIsDimmed(true);
@@ -262,48 +342,122 @@ export default function ReaderPage() {
                 message,
             });
         } finally {
-            setIsFunding(false);
+            if (!isStaleTopUpAttempt(attemptId)) {
+                setIsFunding(false);
+            }
         }
     }
 
-    async function settleDepositAndRetry(intentId: string, txHash: string) {
+    async function settleDepositAndRetry(intentId: string, txHash: string, attemptId: number) {
         if (!userAddress) {
             throw new Error('Wallet address not available.');
         }
 
-        const settlement = await apiClient.settleDeposit(userAddress, intentId, txHash);
-        if (settlement.status === 'pending') {
-            setPendingDeposit({ intentId, txHash });
-            setReaderState('locked');
-            setIsDimmed(true);
+        for (let cycle = 1; cycle <= AUTO_VERIFY_MAX_ATTEMPTS; cycle += 1) {
+            setStatusMessage(`Verifying payment on Stacks (${cycle}/${AUTO_VERIFY_MAX_ATTEMPTS})...`);
+            const settlement = await apiClient.settleDeposit(userAddress, intentId, txHash);
+            if (isStaleTopUpAttempt(attemptId)) {
+                return;
+            }
+
+            if (settlement.status === 'pending') {
+                setPendingDeposit({ intentId, txHash });
+                setReaderState('locked');
+                setIsDimmed(true);
+                setShowTopUpPanel(true);
+                setStatusMessage(`Verification pending on-chain (${cycle}/${AUTO_VERIFY_MAX_ATTEMPTS})...`);
+
+                if (cycle < AUTO_VERIFY_MAX_ATTEMPTS) {
+                    await sleep(AUTO_VERIFY_INTERVAL_MS);
+                    continue;
+                }
+
+                setStatusMessage('Still pending. You can retry verification or start a new top-up.');
+                return;
+            }
+
+            if (settlement.status === 'invalid') {
+                setPendingDeposit(null);
+                throw new Error(settlement.error || 'Deposit verification failed.');
+            }
+
+            if (settlement.status !== 'confirmed') {
+                throw new Error(settlement.error || 'Deposit verification failed.');
+            }
+
+            setStatusMessage('Verification confirmed. Refreshing unlocked page...');
+
+            if (settlement.balance) {
+                setCreditBalance(settlement.balance);
+            } else {
+                await loadCreditBalance(userAddress);
+            }
+
+            setPendingDeposit(null);
+            setStatusMessage(null);
+            pushToast({
+                tone: 'success',
+                title: 'Credits added',
+                message: settlement.amountCredited
+                    ? `${formatStxAmount(settlement.amountCredited)} credited to your reading balance.`
+                    : 'Your reading balance was updated.',
+            });
+
+            if (readerState === 'locked') {
+                await loadPageContent(currentPage);
+            }
+            return;
+        }
+    }
+
+    function isStaleTopUpAttempt(attemptId: number): boolean {
+        return attemptId !== topUpAttemptRef.current;
+    }
+
+    function handleTopUpSecondaryAction() {
+        if (isFunding) {
+            topUpAttemptRef.current += 1;
+            setIsFunding(false);
+            setPendingDeposit(null);
+            setStatusMessage('Top-up flow canceled. You can start a new request.');
             setShowTopUpPanel(true);
-            setStatusMessage('Top-up is still pending on-chain. Tap "Verify top-up" in a moment.');
+            pushToast({
+                tone: 'info',
+                title: 'Top-up canceled',
+                message: 'You can now retry with a fresh top-up.',
+            });
             return;
         }
 
-        if (settlement.status === 'invalid') {
+        if (pendingDeposit) {
             setPendingDeposit(null);
-            throw new Error(settlement.error || 'Deposit verification failed.');
+            setStatusMessage('Pending verification cleared. Start a new top-up when ready.');
+            setShowTopUpPanel(true);
+            pushToast({
+                tone: 'info',
+                title: 'Pending top-up cleared',
+                message: 'You can create a new top-up request now.',
+            });
+            return;
         }
 
-        if (settlement.status !== 'confirmed') {
-            throw new Error(settlement.error || 'Deposit verification failed.');
+        setShowTopUpPanel(false);
+    }
+
+    function openManualTopUpPanel() {
+        if (!fundingOptions) {
+            pushToast({
+                tone: 'error',
+                title: 'Funding unavailable',
+                message: 'Treasury funding details are unavailable right now.',
+            });
+            return;
         }
 
-        if (settlement.balance) {
-            setCreditBalance(settlement.balance);
-        }
-        setPendingDeposit(null);
+        setInsufficientCredit(null);
+        setTopUpAmount(fundingOptions.suggestedAmount);
         setStatusMessage(null);
-        pushToast({
-            tone: 'success',
-            title: 'Credits added',
-            message: settlement.amountCredited
-                ? `${formatStxAmount(settlement.amountCredited)} credited to your reading balance.`
-                : 'Your reading balance was updated.',
-        });
-
-        await loadPageContent(currentPage);
+        setShowTopUpPanel(true);
     }
 
     function triggerPageTurn(direction: 'next' | 'prev') {
@@ -385,6 +539,7 @@ export default function ReaderPage() {
     }
 
     const progress = book ? (currentPage / book.totalPages) * 100 : 0;
+    const panelFunding = insufficientCredit?.topUp || fundingOptions;
 
     return (
         <div className="app-shell">
@@ -400,9 +555,16 @@ export default function ReaderPage() {
                             Page {currentPage}{book ? ` of ${book.totalPages}` : ''}
                         </p>
                     </div>
-                    <div className="hidden rounded-full border border-slate-300 bg-slate-50/70 px-3 py-1 text-xs font-medium text-slate-700 md:block">
+                    {/* <div className="hidden rounded-full border border-slate-300 bg-slate-50/70 px-3 py-1 text-xs font-medium text-slate-700 md:block">
                         Credits: {formatStxAmount(creditBalance)}
-                    </div>
+                    </div> */}
+                    <button
+                        type="button"
+                        onClick={openManualTopUpPanel}
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-700 hover:bg-slate-50"
+                    >
+                        Wallet
+                    </button>
                     <ThemeToggle />
                     <WalletConnect />
                 </div>
@@ -519,13 +681,17 @@ export default function ReaderPage() {
             </main>
 
             <AnimatePresence>
-                {showTopUpPanel && insufficientCredit && (
+                {showTopUpPanel && (insufficientCredit || fundingOptions) && (
                     <>
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            onClick={() => setShowTopUpPanel(false)}
+                            onClick={() => {
+                                if (!isFunding) {
+                                    setShowTopUpPanel(false);
+                                }
+                            }}
                             className="fixed inset-0 z-40 bg-black/40"
                         />
 
@@ -540,28 +706,54 @@ export default function ReaderPage() {
                                 <div className="mb-5 flex items-start justify-between">
                                     <div>
                                         <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Reading credits</p>
-                                        <h2 className="mt-2 text-2xl font-display text-slate-900">Top up to continue page {currentPage}</h2>
+                                        <h2 className="mt-2 text-2xl font-display text-slate-900">
+                                            {insufficientCredit
+                                                ? `Top up to continue page ${currentPage}`
+                                                : 'Add credits to your wallet'}
+                                        </h2>
                                     </div>
-                                    <button onClick={() => setShowTopUpPanel(false)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50">
+                                    <button
+                                        onClick={() => {
+                                            if (!isFunding) {
+                                                setShowTopUpPanel(false);
+                                            }
+                                        }}
+                                        className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-50"
+                                    >
                                         ×
                                     </button>
                                 </div>
 
                                 <div className="surface mb-5 rounded-2xl bg-slate-50/70 p-4">
-                                    <div className="grid gap-3 text-sm text-slate-600">
-                                        <div className="flex items-center justify-between">
-                                            <span>Required for this page</span>
-                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.requiredAmount)}</span>
+                                    {insufficientCredit ? (
+                                        <div className="grid gap-3 text-sm text-slate-600">
+                                            <div className="flex items-center justify-between">
+                                                <span>Required for this page</span>
+                                                <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.requiredAmount)}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span>Current balance</span>
+                                                <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.currentBalance)}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span>Shortfall</span>
+                                                <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.shortfall)}</span>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center justify-between">
-                                            <span>Current balance</span>
-                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.currentBalance)}</span>
+                                    ) : (
+                                        <div className="grid gap-3 text-sm text-slate-600">
+                                            <div className="flex items-center justify-between">
+                                                <span>Current balance</span>
+                                                <span className="font-medium text-slate-900">{formatStxAmount(creditBalance)}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <span>Top-up wallet</span>
+                                                <span className="max-w-[68%] truncate font-medium text-slate-900">
+                                                    {shortenAddress(panelFunding?.recipient) || 'Unavailable'}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center justify-between">
-                                            <span>Shortfall</span>
-                                            <span className="font-medium text-slate-900">{formatStxAmount(insufficientCredit.shortfall)}</span>
-                                        </div>
-                                    </div>
+                                    )}
                                 </div>
 
                                 <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
@@ -592,8 +784,10 @@ export default function ReaderPage() {
                                 )}
 
                                 <div className="mt-5 flex gap-3">
-                                    <button onClick={() => setShowTopUpPanel(false)} disabled={isFunding} className="btn-secondary flex-1">
-                                        Cancel
+                                    <button onClick={handleTopUpSecondaryAction} className="btn-secondary flex-1">
+                                        {isFunding
+                                            ? 'Stop'
+                                            : (pendingDeposit ? 'Start new top-up' : 'Cancel')}
                                     </button>
                                     <button
                                         onClick={() => void (pendingDeposit ? verifyPendingDeposit() : startTopUp())}
@@ -602,7 +796,7 @@ export default function ReaderPage() {
                                     >
                                         {isFunding
                                             ? (pendingDeposit ? 'Verifying...' : 'Processing...')
-                                            : (pendingDeposit ? 'Verify top-up' : 'Add credits')}
+                                            : (pendingDeposit ? 'Retry verification' : 'Add credits')}
                                     </button>
                                 </div>
                             </motion.div>
@@ -704,4 +898,10 @@ function readTxHash(response: Record<string, unknown>): string | null {
     }
 
     return null;
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
