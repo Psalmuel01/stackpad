@@ -58,11 +58,11 @@ export default function Home() {
                     >
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-as-You-Read eBook Platform</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            A decentralized reading platform where readers pay per page or chapter.
+                            A wallet-backed reading platform with prepaid credits and instant unlocks.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
-                            Built on x402-stacks, Stackpad charges only when locked content is accessed. Readers pay for actual
-                            consumption, and authors are compensated fairly for what gets read.
+                            Readers top up once, then page and chapter access deducts automatically in the background.
+                            HTTP 402 still signals when balance runs low, without per-page wallet friction.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
@@ -84,18 +84,18 @@ export default function Home() {
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
                             {
-                                title: 'Pay by consumption',
-                                detail: 'Unlock access page-by-page or chapter-by-chapter instead of paying for unread content.',
+                                title: 'Prepaid reading credits',
+                                detail: 'Deposit STX once and keep reading while per-page deductions happen automatically.',
                                 icon: <WalletIcon />,
                             },
                             {
-                                title: 'x402-stacks native',
-                                detail: 'HTTP 402 payment requirements and facilitator settlement power every locked request.',
+                                title: 'HTTP 402 top-up prompt',
+                                detail: 'When balance is low, the API returns 402 with precise top-up terms for the reader wallet.',
                                 icon: <LockIcon />,
                             },
                             {
                                 title: 'Fair author payouts',
-                                detail: 'Revenue aligns with real reading behavior, so compensation matches actual usage.',
+                                detail: 'Usage events are logged per unlock and settled in reliable background batches.',
                                 icon: <BookIcon />,
                             },
                         ].map((item) => (
@@ -115,18 +115,18 @@ export default function Home() {
                         <div className="mb-8">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow detail</p>
                             <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                                How pay-as-you-read works across buyer, server, and facilitator.
+                                How prepaid pay-as-you-read works across wallet, backend, and settlement.
                             </h2>
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             {[
-                                ['1', 'Reader requests premium access', 'The next locked page or chapter is requested from the API.'],
-                                ['2', 'Server returns HTTP 402', 'Payment terms include amount, asset, payTo, and network requirements.'],
-                                ['3', 'Buyer signs payment', 'The buyer adapter signs a payment payload for that exact unlock request.'],
-                                ['4', 'Facilitator verifies and settles', 'Payment is validated and settled before the resource is released.'],
-                                ['5', 'Content unlocks instantly', 'The paid page/chapter returns with payment-response metadata.'],
-                                ['6', 'Entitlement is recorded', 'Unlocked access is remembered so the reader can continue seamlessly.'],
+                                ['1', 'Reader reaches locked content', 'The API checks whether the requested page/chapter is already unlocked.'],
+                                ['2', 'Balance check runs atomically', 'If credits are available, the backend deducts and unlocks in one transaction.'],
+                                ['3', 'Low balance returns HTTP 402', 'The response includes top-up amount, network, and recipient details.'],
+                                ['4', 'Reader signs one top-up transfer', 'Wallet sends STX to Stackpad treasury with a tracked deposit intent memo.'],
+                                ['5', 'Backend verifies and credits', 'Deposit is confirmed via indexer checks and reflected in reader balance.'],
+                                ['6', 'Reading continues instantly', 'Subsequent pages unlock without repeated wallet popups until balance runs out.'],
                             ].map(([step, title, detail]) => (
                                 <article key={step} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
                                     <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>

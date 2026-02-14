@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import type { Book } from '@stackpad/shared';
 import { useAuth } from '@/hooks/useAuth';
 import { apiClient } from '@/lib/api';
 import { WalletConnect } from '@/components/WalletConnect';
@@ -132,13 +131,6 @@ When the system is quiet, people can focus on decisions instead of recovery.`.re
     },
 ];
 
-interface EditableBook {
-    id: number;
-    title: string;
-    coverImageUrl: string;
-    pagePrice: string;
-}
-
 interface UploadPagePayload {
     pageNumber: number;
     chapterNumber: number;
@@ -196,13 +188,9 @@ export default function AuthorPage() {
     const [coverUrl, setCoverUrl] = useState('');
     const [bookContent, setBookContent] = useState('');
     const [pagePrice, setPagePrice] = useState(DEFAULT_PAGE_PRICE);
-    const [contractBookId, setContractBookId] = useState('');
 
     const [detectedPages, setDetectedPages] = useState<UploadPagePayload[] | null>(null);
     const [sourceFileName, setSourceFileName] = useState<string | null>(null);
-    const [authorBooks, setAuthorBooks] = useState<EditableBook[]>([]);
-    const [booksLoading, setBooksLoading] = useState(false);
-    const [booksSaving, setBooksSaving] = useState<Record<number, boolean>>({});
 
     const effectivePages = useMemo(() => {
         if (detectedPages && detectedPages.length > 0) {
@@ -215,33 +203,11 @@ export default function AuthorPage() {
     const totalPages = effectivePages.length;
     const totalChapters = useMemo(() => deriveChapterCount(effectivePages), [effectivePages]);
 
-    useEffect(() => {
-        if (!userAddress) {
-            setAuthorBooks([]);
-            return;
-        }
-
-        void loadAuthorBooks(userAddress);
-    }, [userAddress]);
-
-    async function loadAuthorBooks(authorAddress: string) {
-        try {
-            setBooksLoading(true);
-            const books = await apiClient.getAuthorBooks(authorAddress);
-            setAuthorBooks(books.map(toEditableBook));
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setBooksLoading(false);
-        }
-    }
-
     function clearUploadForm() {
         setBookTitle('');
         setCoverUrl('');
         setBookContent('');
         setPagePrice(DEFAULT_PAGE_PRICE);
-        setContractBookId('');
         setDetectedPages(null);
         setSourceFileName(null);
     }
@@ -293,7 +259,6 @@ export default function AuthorPage() {
                     totalChapters,
                     pagePrice: microStxPrice.toString(),
                     chapterPrice: (microStxPrice * BigInt(5)).toString(),
-                    contractBookId: contractBookId ? Number(contractBookId) : undefined,
                 },
                 effectivePages
             );
@@ -304,7 +269,6 @@ export default function AuthorPage() {
                 message: `"${title}" is now live in your library.`,
             });
             clearUploadForm();
-            await loadAuthorBooks(userAddress);
         } catch (error) {
             console.error(error);
             pushToast({
@@ -429,13 +393,20 @@ export default function AuthorPage() {
                     className="mx-auto max-w-3xl"
                 >
                     <div className="mb-11">
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Author</p>
-                        <h1 className="mt-5 font-display text-5xl leading-tight text-slate-900 md:text-6xl">
-                            Publish chapters with page-level pricing.
-                        </h1>
-                        <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                            Upload a text file or PDF for automatic page detection, or directly type/paste text for quick testing.
-                        </p>
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div>
+                                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Author</p>
+                                <h1 className="mt-5 font-display text-5xl leading-tight text-slate-900 md:text-6xl">
+                                    Publish chapters with page-level pricing.
+                                </h1>
+                                <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
+                                    Upload a text file or PDF for automatic page detection, or directly type/paste text for quick testing.
+                                </p>
+                            </div>
+                            <Link href="/author/published" className="btn-primary">
+                                See published books
+                            </Link>
+                        </div>
                     </div>
 
                     <section className="card">
@@ -547,164 +518,16 @@ export default function AuthorPage() {
                                 <p className="mt-2 text-xs text-slate-500">1 STX = 1,000,000 microSTX.</p>
                             </div>
 
-                            <div>
-                                <label htmlFor="contract-book-id" className="mb-2 block text-sm font-medium text-slate-700">
-                                    On-chain book ID (optional)
-                                </label>
-                                <input
-                                    id="contract-book-id"
-                                    type="number"
-                                    value={contractBookId}
-                                    onChange={(event) => setContractBookId(event.target.value)}
-                                    min={1}
-                                    step={1}
-                                    className="input-base"
-                                    placeholder="Book ID from contract"
-                                />
-                            </div>
-
                             <button type="submit" disabled={uploading || processingFile} className="btn-primary w-full py-3 text-base">
                                 {uploading ? 'Uploading...' : 'Publish book'}
                             </button>
                         </form>
                     </section>
 
-                    <section className="card mt-8">
-                        <div className="mb-6 flex items-center justify-between gap-4">
-                            <h2 className="font-display text-3xl text-slate-900">Published books</h2>
-                            <button
-                                type="button"
-                                onClick={() => userAddress && void loadAuthorBooks(userAddress)}
-                                className="btn-secondary"
-                            >
-                                Refresh
-                            </button>
-                        </div>
-
-                        {booksLoading ? (
-                            <p className="text-sm text-slate-600">Loading your books...</p>
-                        ) : authorBooks.length === 0 ? (
-                            <p className="text-sm text-slate-600">No books published yet.</p>
-                        ) : (
-                            <div className="space-y-5">
-                                {authorBooks.map((book) => (
-                                    <article key={book.id} className="rounded-xl border border-slate-200 p-4">
-                                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Book #{book.id}</p>
-                                        <div className="mt-3 grid gap-4 md:grid-cols-2">
-                                            <div>
-                                                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
-                                                    Title
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    value={book.title}
-                                                    onChange={(event) => updateAuthorBookField(book.id, 'title', event.target.value)}
-                                                    className="input-base"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
-                                                    Cover URL
-                                                </label>
-                                                <input
-                                                    type="url"
-                                                    value={book.coverImageUrl}
-                                                    onChange={(event) => updateAuthorBookField(book.id, 'coverImageUrl', event.target.value)}
-                                                    className="input-base"
-                                                    placeholder="https://example.com/cover.jpg"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
-                                                    Page price (microSTX)
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min={0}
-                                                    step={100}
-                                                    value={book.pagePrice}
-                                                    onChange={(event) => updateAuthorBookField(book.id, 'pagePrice', event.target.value)}
-                                                    className="input-base"
-                                                />
-                                            </div>
-                                            <div className="flex items-end">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => void saveAuthorBook(book.id)}
-                                                    disabled={!!booksSaving[book.id]}
-                                                    className="btn-primary w-full"
-                                                >
-                                                    {booksSaving[book.id] ? 'Saving...' : 'Save updates'}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </article>
-                                ))}
-                            </div>
-                        )}
-                    </section>
                 </motion.div>
             </main>
         </div>
     );
-
-    function updateAuthorBookField(
-        bookId: number,
-        field: keyof Omit<EditableBook, 'id'>,
-        value: string
-    ) {
-        setAuthorBooks((prev) => prev.map((book) => (
-            book.id === bookId
-                ? { ...book, [field]: value }
-                : book
-        )));
-    }
-
-    async function saveAuthorBook(bookId: number) {
-        if (!userAddress) {
-            return;
-        }
-
-        const target = authorBooks.find((book) => book.id === bookId);
-        if (!target) {
-            return;
-        }
-
-        const parsedPrice = parseMicroStx(target.pagePrice);
-        if (parsedPrice === null) {
-            pushToast({
-                tone: 'error',
-                title: 'Invalid page price',
-                message: `Book #${bookId} has an invalid microSTX price.`,
-            });
-            return;
-        }
-
-        setBooksSaving((prev) => ({ ...prev, [bookId]: true }));
-        try {
-            await apiClient.updateAuthorBook(bookId, userAddress, {
-                title: target.title.trim(),
-                coverImageUrl: target.coverImageUrl.trim() || null,
-                pagePrice: parsedPrice.toString(),
-                chapterPrice: (parsedPrice * BigInt(5)).toString(),
-            });
-            pushToast({
-                tone: 'success',
-                title: 'Update successful',
-                message: `Book #${bookId} settings were saved.`,
-            });
-            await loadAuthorBooks(userAddress);
-        } catch (error) {
-            console.error(error);
-            pushToast({
-                tone: 'error',
-                title: 'Update failed',
-                message: `Could not save changes for book #${bookId}.`,
-            });
-        } finally {
-            setBooksSaving((prev) => ({ ...prev, [bookId]: false }));
-        }
-    }
 }
 
 function paginateText(content: string): UploadPagePayload[] {
@@ -909,13 +732,4 @@ async function importExternalModule(url: string): Promise<unknown> {
 
 function stripExtension(fileName: string): string {
     return fileName.replace(/\.[^.]+$/, '');
-}
-
-function toEditableBook(book: Book): EditableBook {
-    return {
-        id: book.id,
-        title: book.title,
-        coverImageUrl: book.coverImageUrl || '',
-        pagePrice: typeof book.pagePrice === 'bigint' ? book.pagePrice.toString() : String(book.pagePrice),
-    };
 }

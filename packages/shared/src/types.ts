@@ -8,7 +8,6 @@ export interface Book {
     totalChapters: number;
     pagePrice: bigint | string;      // µSTX
     chapterPrice: bigint | string;   // µSTX
-    contractBookId?: number;
     createdAt: Date | string;
 }
 
@@ -81,6 +80,24 @@ export interface ContentResponse {
     prevPage?: number;
     renderType?: 'text' | 'pdf-page';
     pdfPageBase64?: string;
+    creditBalance?: string;
+    creditDeducted?: string;
+}
+
+export interface CreditTopUpRequirement {
+    recipient: string;
+    network: string;
+    suggestedAmount: string;
+}
+
+export interface InsufficientCreditResponse {
+    success: false;
+    code: 'INSUFFICIENT_CREDIT';
+    error: string;
+    requiredAmount: string;
+    currentBalance: string;
+    shortfall: string;
+    topUp: CreditTopUpRequirement;
 }
 
 // x402 specific types

@@ -1,13 +1,10 @@
 import type { Book, ContentResponse, BookListResponse } from '@stackpad/shared';
 import {
     is402Response,
-    parsePaymentInstructions,
-    parseXPaymentRequirements,
     parsePaymentRequiredHeader,
-    formatPaymentProofHeader,
-    type X402PaymentRequirement,
+    parsePaymentResponseHeader,
     type X402V2PaymentRequired,
-    type PaymentProofData,
+    type X402V2PaymentResponse,
 } from '@stackpad/x402-client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -34,19 +31,12 @@ class ApiClient {
     async getPage(
         bookId: number,
         pageNum: number,
-        userAddress: string,
-        paymentProof?: PaymentProofData
+        userAddress: string
     ): Promise<{
         content?: ContentResponse;
         requires402?: boolean;
-        paymentInstructions?: {
-            amount: string;
-            recipient: string;
-            memo: string;
-            network: string;
-        };
-        paymentRequirements?: X402PaymentRequirement[];
-        paymentRequiredV2?: X402V2PaymentRequired;
+        insufficientCredit?: InsufficientCreditPayload;
+        paymentRequired?: X402V2PaymentRequired;
         error?: string;
         details?: string;
     }> {
@@ -54,15 +44,23 @@ class ApiClient {
             'X-Stacks-Address': userAddress,
         };
 
-        if (paymentProof) {
-            Object.assign(headers, formatPaymentProofHeader(paymentProof));
-        }
-
         const response = await fetch(`${this.baseUrl}/api/content/${bookId}/page/${pageNum}`, {
             headers,
         });
 
         if (is402Response(response)) {
+            const paymentRequired = parsePaymentRequiredHeader(response.headers);
+            if (paymentRequired?.accepts?.[0]) {
+                const accepted = paymentRequired.accepts[0];
+                console.info('[x402] payment-required header', {
+                    network: accepted.network,
+                    amount: accepted.amount,
+                    asset: accepted.asset,
+                    payTo: accepted.payTo,
+                    resource: paymentRequired.resource?.url,
+                });
+            }
+
             let errorBody: Record<string, unknown> | null = null;
             try {
                 errorBody = await response.json();
@@ -70,35 +68,10 @@ class ApiClient {
                 errorBody = null;
             }
 
-            const paymentRequirements = parseXPaymentRequirements(response.headers)
-                || asPaymentRequirements(errorBody?.paymentRequirements);
-
-            const v2PaymentRequired = parsePaymentRequiredHeader(response.headers);
-            const v2Requirements = v2PaymentRequired?.accepts.map((item) => ({
-                scheme: item.scheme,
-                network: item.network,
-                maxAmountRequired: item.amount,
-                payTo: item.payTo,
-                asset: item.asset,
-                description: v2PaymentRequired.resource?.description,
-                mimeType: v2PaymentRequired.resource?.mimeType,
-                extra: item.extra,
-            } as X402PaymentRequirement));
-
-            let paymentInstructions = parsePaymentInstructions(response.headers)
-                || asPaymentInstructions(errorBody?.paymentInstructions);
-
-            const effectiveRequirements = paymentRequirements || v2Requirements;
-
-            if (!paymentInstructions && effectiveRequirements && effectiveRequirements.length > 0) {
-                paymentInstructions = requirementToInstructions(effectiveRequirements[0]);
-            }
-
             return {
                 requires402: true,
-                paymentInstructions,
-                paymentRequirements: effectiveRequirements,
-                paymentRequiredV2: v2PaymentRequired || undefined,
+                insufficientCredit: asInsufficientCreditPayload(errorBody),
+                paymentRequired: paymentRequired || undefined,
                 error: asString(errorBody?.error),
                 details: asString(errorBody?.details),
             };
@@ -111,6 +84,106 @@ class ApiClient {
 
         const data = await response.json();
         return { content: data };
+    }
+
+    async getCreditBalance(walletAddress: string): Promise<{ balance: string; topUp?: CreditFundingPayload }> {
+        const response = await fetch(
+            `${this.baseUrl}/api/credits/balance?address=${encodeURIComponent(walletAddress)}`
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch credit balance');
+        }
+
+        const data = await response.json() as {
+            balance: string;
+            topUp?: {
+                recipient: string;
+                network: string;
+                suggestedAmount: string;
+            };
+        };
+        return {
+            balance: data.balance,
+            topUp: data.topUp,
+        };
+    }
+
+    async getReadingProgress(
+        bookId: number,
+        walletAddress: string
+    ): Promise<{ lastPage: number | null }> {
+        const response = await fetch(
+            `${this.baseUrl}/api/content/${bookId}/progress?address=${encodeURIComponent(walletAddress)}`
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch reading progress');
+        }
+
+        const data = await response.json() as { lastPage?: number | null };
+        return {
+            lastPage: Number.isInteger(data.lastPage) ? Number(data.lastPage) : null,
+        };
+    }
+
+    async createDepositIntent(
+        walletAddress: string,
+        amount: string
+    ): Promise<DepositIntentResponse> {
+        const response = await fetch(`${this.baseUrl}/api/credits/deposit-intent`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                walletAddress,
+                amount,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await safeParseError(response);
+            throw new Error(error || 'Failed to create deposit intent');
+        }
+
+        const data = await response.json() as { intent: DepositIntentResponse };
+        return data.intent;
+    }
+
+    async settleDeposit(
+        walletAddress: string,
+        intentId: string,
+        txHash?: string
+    ): Promise<DepositSettlementResponse> {
+        const response = await fetch(`${this.baseUrl}/api/credits/settle`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                walletAddress,
+                intentId,
+                txHash: txHash || undefined,
+            }),
+        });
+
+        const paymentResponse = parsePaymentResponseHeader(response.headers);
+        if (paymentResponse) {
+            console.info('[x402] payment-response header', paymentResponse);
+        }
+
+        const data = await response.json() as DepositSettlementResponse & { error?: string };
+        data.x402PaymentResponse = paymentResponse || undefined;
+
+        if (!response.ok) {
+            if (data.status === 'pending' || data.status === 'invalid') {
+                return data;
+            }
+            throw new Error(data.error || 'Failed to settle deposit');
+        }
+
+        return data;
     }
 
     async uploadBook(book: UploadBookInput, pages: UploadPageInput[]): Promise<{ bookId: number }> {
@@ -160,7 +233,6 @@ class ApiClient {
             coverImageUrl?: string | null;
             pagePrice?: string;
             chapterPrice?: string;
-            contractBookId?: number | null;
         }
     ): Promise<Book> {
         const response = await fetch(`${this.baseUrl}/api/author/books/${bookId}`, {
@@ -189,54 +261,49 @@ function asString(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined;
 }
 
-function asPaymentRequirements(value: unknown): X402PaymentRequirement[] | undefined {
-    return Array.isArray(value) ? (value as X402PaymentRequirement[]) : undefined;
-}
-
-function asPaymentInstructions(value: unknown): {
-    amount: string;
-    recipient: string;
-    memo: string;
-    network: string;
-} | undefined {
+function asInsufficientCreditPayload(value: unknown): InsufficientCreditPayload | undefined {
     if (!value || typeof value !== 'object') {
         return undefined;
     }
 
     const candidate = value as Record<string, unknown>;
     if (
-        typeof candidate.amount === 'string' &&
-        typeof candidate.recipient === 'string' &&
-        typeof candidate.memo === 'string' &&
-        typeof candidate.network === 'string'
+        candidate.code === 'INSUFFICIENT_CREDIT' &&
+        typeof candidate.requiredAmount === 'string' &&
+        typeof candidate.currentBalance === 'string' &&
+        typeof candidate.shortfall === 'string' &&
+        candidate.topUp &&
+        typeof candidate.topUp === 'object'
     ) {
-        return {
-            amount: candidate.amount,
-            recipient: candidate.recipient,
-            memo: candidate.memo,
-            network: candidate.network,
-        };
+        const topUp = candidate.topUp as Record<string, unknown>;
+        if (
+            typeof topUp.recipient === 'string' &&
+            typeof topUp.network === 'string' &&
+            typeof topUp.suggestedAmount === 'string'
+        ) {
+            return {
+                requiredAmount: candidate.requiredAmount,
+                currentBalance: candidate.currentBalance,
+                shortfall: candidate.shortfall,
+                topUp: {
+                    recipient: topUp.recipient,
+                    network: topUp.network,
+                    suggestedAmount: topUp.suggestedAmount,
+                },
+            };
+        }
     }
 
     return undefined;
 }
 
-function requirementToInstructions(requirement: X402PaymentRequirement): {
-    amount: string;
-    recipient: string;
-    memo: string;
-    network: string;
-} | undefined {
-    if (!requirement.maxAmountRequired || !requirement.payTo || !requirement.network) {
-        return undefined;
+async function safeParseError(response: Response): Promise<string | null> {
+    try {
+        const body = await response.json() as { error?: string };
+        return typeof body.error === 'string' ? body.error : null;
+    } catch {
+        return null;
     }
-
-    return {
-        amount: requirement.maxAmountRequired,
-        recipient: requirement.payTo,
-        memo: requirement.extra?.memo || '',
-        network: requirement.network,
-    };
 }
 
 interface UploadBookInput {
@@ -247,7 +314,6 @@ interface UploadBookInput {
     totalChapters: number;
     pagePrice: string;
     chapterPrice: string;
-    contractBookId?: number;
 }
 
 interface UploadPageInput {
@@ -279,23 +345,50 @@ interface AuthorEarningsResult {
     }>;
 }
 
+interface DepositIntentResponse {
+    intentId: string;
+    walletAddress: string;
+    amount: string;
+    recipient: string;
+    memo: string;
+    network: string;
+    expiresAt: string;
+}
+
+interface DepositSettlementResponse {
+    success: boolean;
+    status: 'pending' | 'confirmed' | 'invalid';
+    txHash?: string;
+    amountCredited?: string;
+    balance?: string;
+    error?: string;
+    x402PaymentResponse?: X402V2PaymentResponse;
+}
+
+interface InsufficientCreditPayload {
+    requiredAmount: string;
+    currentBalance: string;
+    shortfall: string;
+    topUp: {
+        recipient: string;
+        network: string;
+        suggestedAmount: string;
+    };
+}
+
+interface CreditFundingPayload {
+    recipient: string;
+    network: string;
+    suggestedAmount: string;
+}
+
+export type ReaderPageResult = Awaited<ReturnType<ApiClient['getPage']>>;
+export type ReaderDepositIntent = DepositIntentResponse;
+export type ReaderDepositSettlement = DepositSettlementResponse;
+
 export interface X402Diagnostics {
     readerAddress?: string;
     httpStatus?: number;
-    paymentRequired?: {
-        amount?: string;
-        asset?: string;
-        network?: string;
-        payTo?: string;
-        maxTimeoutSeconds?: number;
-        memo?: string;
-    };
-    paymentResponse?: {
-        success?: boolean;
-        transaction?: string;
-        payer?: string;
-        network?: string;
-    };
     error?: string;
     details?: string;
 }

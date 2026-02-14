@@ -2,8 +2,9 @@
 
 This is the Express.js backend for Stackpad. It handles:
 - Book metadata and content storage (PostgreSQL)
-- x402 Payment Protocol verification
+- Prepaid reader credit balances and atomic unlock deductions
 - Author dashboards and uploads
+- Treasury-signed batched STX payouts to authors
 
 ## Setup
 
@@ -17,6 +18,9 @@ This is the Express.js backend for Stackpad. It handles:
     ```bash
     cp .env.example .env
     ```
+    Required for prepaid credits:
+    - `STACKPAD_TREASURY_ADDRESS` (wallet that receives reader top-up transfers)
+    - `STACKPAD_TREASURY_PRIVATE_KEY` (hex private key for the treasury signer used to broadcast author payouts)
 
 3.  **Database Migration**:
     Initialize the database schema.
@@ -52,5 +56,24 @@ npm start
 
 -   `GET /api/books`: List all books
 -   `GET /api/books/:id`: Get book details
--   `GET /api/content/:bookId/page/:pageNum`: Get page content (requires payment headers for locked content)
+-   `GET /api/content/:bookId/page/:pageNum`: Get page content (deducts reader credits for locked pages)
+-   `GET /api/credits/balance?address=SP...`: Reader credit balance
+-   `POST /api/credits/deposit-intent`: Create top-up intent
+-   `POST /api/credits/settle`: Verify deposit tx and credit balance
+-   `POST /api/credits/settle-authors`: Manually trigger treasury payout batching (ops/debug)
 -   `POST /api/author/upload`: Upload a new book (Author only)
+
+## Author Settlement
+
+Author payouts are processed by a background worker:
+
+- Revenue events are created when locked pages/chapters are unlocked from prepaid credits.
+- Worker groups events by author and broadcasts one treasury-signed STX transfer per author batch.
+- Batch tx status is reconciled against the Stacks API until confirmed.
+
+Key settings:
+
+- `AUTHOR_SETTLEMENT_INTERVAL_MS` (default `60000`)
+- `AUTHOR_SETTLEMENT_TIMEOUT_MS` (default `900000`)
+- `AUTHOR_SETTLEMENT_RECONCILE_LIMIT` (default `50`)
+- `AUTHOR_PAYOUT_MIN_MICROSTX` (default `1`)
