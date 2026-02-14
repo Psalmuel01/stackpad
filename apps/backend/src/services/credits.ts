@@ -12,6 +12,8 @@ const TREASURY_ADDRESS = process.env.STACKPAD_TREASURY_ADDRESS || process.env.SE
 const DEFAULT_TOP_UP_AMOUNT = toBigIntSafe(process.env.DEFAULT_TOP_UP_MICROSTX, BigInt(200_000)); // 0.2 STX
 const DEPOSIT_INTENT_TTL_MINUTES = toNumberSafe(process.env.DEPOSIT_INTENT_TTL_MINUTES, 30);
 const DEPOSIT_PENDING_STATUSES = new Set(['pending', 'queued', 'processing']);
+const PLATFORM_FEE_BPS = toBpsSafe(process.env.PLATFORM_FEE_BPS, 100); // 1%
+const BPS_DENOMINATOR = BigInt(10_000);
 
 export interface DepositIntent {
     intentId: string;
@@ -54,6 +56,15 @@ export interface CreditFundingOptions {
     recipient: string;
     network: string;
     suggestedAmount: string;
+}
+
+export interface PlatformRevenueSummary {
+    feeBps: number;
+    pendingAmount: string;
+    settledAmount: string;
+    totalAmount: string;
+    pendingEvents: number;
+    totalEvents: number;
 }
 
 interface PageChargeInput {
@@ -449,6 +460,7 @@ export async function chargeCreditsForPage(input: PageChargeInput): Promise<Cred
         }
 
         const newBalance = currentBalance - input.pagePrice;
+        const split = splitRevenueAmount(input.pagePrice);
 
         await client.query(
             `UPDATE reader_accounts
@@ -498,19 +510,39 @@ export async function chargeCreditsForPage(input: PageChargeInput): Promise<Cred
             throw new Error('Concurrent page unlock conflict');
         }
 
-        await client.query(
-            `INSERT INTO author_revenue_events
-                (author_address, reader_address, book_id, page_number, amount, credit_transaction_id)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-                input.authorAddress,
-                normalizedWallet,
-                input.bookId,
-                input.pageNumber,
-                input.pagePrice.toString(),
-                creditTransactionId,
-            ]
-        );
+        if (split.authorShare > BigInt(0)) {
+            await client.query(
+                `INSERT INTO author_revenue_events
+                    (author_address, reader_address, book_id, page_number, amount, credit_transaction_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [
+                    input.authorAddress,
+                    normalizedWallet,
+                    input.bookId,
+                    input.pageNumber,
+                    split.authorShare.toString(),
+                    creditTransactionId,
+                ]
+            );
+        }
+
+        if (split.platformFee > BigInt(0)) {
+            await client.query(
+                `INSERT INTO platform_revenue_events
+                    (reader_address, book_id, page_number, chapter_number, amount, gross_amount, author_amount, credit_transaction_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [
+                    normalizedWallet,
+                    input.bookId,
+                    input.pageNumber,
+                    input.chapterNumber,
+                    split.platformFee.toString(),
+                    input.pagePrice.toString(),
+                    split.authorShare.toString(),
+                    creditTransactionId,
+                ]
+            );
+        }
 
         await client.query('COMMIT');
         return {
@@ -583,6 +615,7 @@ export async function chargeCreditsForChapter(input: ChapterChargeInput): Promis
         }
 
         const newBalance = currentBalance - input.chapterPrice;
+        const split = splitRevenueAmount(input.chapterPrice);
 
         await client.query(
             `UPDATE reader_accounts
@@ -631,19 +664,38 @@ export async function chargeCreditsForChapter(input: ChapterChargeInput): Promis
             throw new Error('Concurrent chapter unlock conflict');
         }
 
-        await client.query(
-            `INSERT INTO author_revenue_events
-                (author_address, reader_address, book_id, chapter_number, amount, credit_transaction_id)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-                input.authorAddress,
-                normalizedWallet,
-                input.bookId,
-                input.chapterNumber,
-                input.chapterPrice.toString(),
-                creditTransactionId,
-            ]
-        );
+        if (split.authorShare > BigInt(0)) {
+            await client.query(
+                `INSERT INTO author_revenue_events
+                    (author_address, reader_address, book_id, chapter_number, amount, credit_transaction_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [
+                    input.authorAddress,
+                    normalizedWallet,
+                    input.bookId,
+                    input.chapterNumber,
+                    split.authorShare.toString(),
+                    creditTransactionId,
+                ]
+            );
+        }
+
+        if (split.platformFee > BigInt(0)) {
+            await client.query(
+                `INSERT INTO platform_revenue_events
+                    (reader_address, book_id, chapter_number, amount, gross_amount, author_amount, credit_transaction_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    normalizedWallet,
+                    input.bookId,
+                    input.chapterNumber,
+                    split.platformFee.toString(),
+                    input.chapterPrice.toString(),
+                    split.authorShare.toString(),
+                    creditTransactionId,
+                ]
+            );
+        }
 
         await client.query('COMMIT');
 
@@ -690,6 +742,36 @@ export async function reconcilePendingDepositIntents(limit = 25): Promise<void> 
 
 export async function settleAuthorRevenueBatch(limit = 500): Promise<{ eventCount: number; totalAmount: bigint }> {
     return settleAuthorPayoutBatch(limit);
+}
+
+export async function getPlatformRevenueSummary(): Promise<PlatformRevenueSummary> {
+    const summary = await pool.query(
+        `SELECT
+            COALESCE(SUM(CASE WHEN settled = FALSE THEN amount ELSE 0 END), 0) AS pending_amount,
+            COALESCE(SUM(CASE WHEN settled = TRUE THEN amount ELSE 0 END), 0) AS settled_amount,
+            COUNT(*) FILTER (WHERE settled = FALSE) AS pending_events,
+            COUNT(*) AS total_events
+         FROM platform_revenue_events`
+    );
+
+    const row = summary.rows[0] as {
+        pending_amount: string | number;
+        settled_amount: string | number;
+        pending_events: string | number;
+        total_events: string | number;
+    };
+
+    const pendingAmount = BigInt(String(row?.pending_amount ?? '0'));
+    const settledAmount = BigInt(String(row?.settled_amount ?? '0'));
+
+    return {
+        feeBps: PLATFORM_FEE_BPS,
+        pendingAmount: pendingAmount.toString(),
+        settledAmount: settledAmount.toString(),
+        totalAmount: (pendingAmount + settledAmount).toString(),
+        pendingEvents: Number(row?.pending_events ?? 0),
+        totalEvents: Number(row?.total_events ?? 0),
+    };
 }
 
 export function getDefaultTopUpAmount(requiredAmount: bigint): bigint {
@@ -949,4 +1031,34 @@ function toNumberSafe(value: string | undefined, fallback: number): number {
     }
 
     return parsed;
+}
+
+function toBpsSafe(value: string | undefined, fallback: number): number {
+    if (!value) {
+        return fallback;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 10_000) {
+        return fallback;
+    }
+
+    return parsed;
+}
+
+function splitRevenueAmount(grossAmount: bigint): { authorShare: bigint; platformFee: bigint } {
+    if (grossAmount <= BigInt(0)) {
+        return {
+            authorShare: BigInt(0),
+            platformFee: BigInt(0),
+        };
+    }
+
+    const platformFee = (grossAmount * BigInt(PLATFORM_FEE_BPS)) / BPS_DENOMINATOR;
+    const authorShare = grossAmount - platformFee;
+
+    return {
+        authorShare,
+        platformFee,
+    };
 }

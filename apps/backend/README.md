@@ -58,6 +58,7 @@ npm start
 -   `GET /api/books/:id`: Get book details
 -   `GET /api/content/:bookId/page/:pageNum`: Get page content (deducts reader credits for locked pages)
 -   `GET /api/credits/balance?address=SP...`: Reader credit balance
+-   `GET /api/credits/platform-revenue`: Platform fee ledger summary (pending/settled)
 -   `POST /api/credits/deposit-intent`: Create top-up intent
 -   `POST /api/credits/settle`: Verify deposit tx and credit balance
 -   `POST /api/credits/settle-authors`: Manually trigger treasury payout batching (ops/debug)
@@ -68,8 +69,14 @@ npm start
 Author payouts are processed by a background worker:
 
 - Revenue events are created when locked pages/chapters are unlocked from prepaid credits.
+- At unlock time, each deduction is split into `author_share` and `platform_fee`.
 - Worker groups events by author and broadcasts one treasury-signed STX transfer per author batch.
 - Batch tx status is reconciled against the Stacks API until confirmed.
+
+Platform fee behavior:
+- Platform fee stays in treasury by default (no automatic outbound transfer).
+- Pending/settled totals are tracked in `platform_revenue_events`.
+- Set `PLATFORM_FEE_BPS` (default `100`, i.e. 1%).
 
 Key settings:
 
@@ -77,3 +84,4 @@ Key settings:
 - `AUTHOR_SETTLEMENT_TIMEOUT_MS` (default `900000`)
 - `AUTHOR_SETTLEMENT_RECONCILE_LIMIT` (default `50`)
 - `AUTHOR_PAYOUT_MIN_MICROSTX` (default `1`)
+- `PLATFORM_FEE_BPS` (default `100`)
