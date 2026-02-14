@@ -415,7 +415,23 @@ export async function chargeCreditsForPage(input: PageChargeInput): Promise<Cred
             [normalizedWallet, input.bookId, input.pageNumber]
         );
 
-        if (existingUnlock.rows.length > 0 || await hasLegacyPageEntitlement(client, normalizedWallet, input.bookId, input.pageNumber, input.chapterNumber)) {
+        let chapterUnlockExists = false;
+        if (input.chapterNumber && input.chapterNumber > 0) {
+            const chapterUnlock = await client.query(
+                `SELECT id
+                 FROM reader_chapter_unlocks
+                 WHERE wallet_address = $1 AND book_id = $2 AND chapter_number = $3
+                 LIMIT 1`,
+                [normalizedWallet, input.bookId, input.chapterNumber]
+            );
+            chapterUnlockExists = chapterUnlock.rows.length > 0;
+        }
+
+        if (
+            existingUnlock.rows.length > 0
+            || chapterUnlockExists
+            || await hasLegacyPageEntitlement(client, normalizedWallet, input.bookId, input.pageNumber, input.chapterNumber)
+        ) {
             await client.query('COMMIT');
             return {
                 status: 'granted',
