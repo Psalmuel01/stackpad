@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
@@ -22,30 +22,58 @@ function shortAddress(address?: string) {
 }
 
 export default function LibraryPage() {
-    const { isAuthenticated, connectWallet } = useAuth();
+    const { isAuthenticated, userAddress, connectWallet } = useAuth();
     const [books, setBooks] = useState<Book[]>([]);
+    const [progressMap, setProgressMap] = useState<Record<number, number>>({});
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!isAuthenticated) {
+        if (!isAuthenticated || !userAddress) {
             setLoading(false);
+            setProgressMap({});
             return;
         }
 
-        void loadBooks();
-    }, [isAuthenticated]);
+        void loadBooksAndProgress(userAddress);
+    }, [isAuthenticated, userAddress]);
 
-    async function loadBooks() {
+    async function loadBooksAndProgress(address: string) {
         setLoading(true);
         try {
-            const booksData = await apiClient.getBooks();
+            const [booksData, progressData] = await Promise.all([
+                apiClient.getBooks(),
+                apiClient.getLibraryProgress(address),
+            ]);
             setBooks(booksData);
+
+            const byBookId: Record<number, number> = {};
+            for (const progress of progressData) {
+                byBookId[progress.bookId] = progress.lastPage;
+            }
+            setProgressMap(byBookId);
         } catch (error) {
             console.error('Failed to load books:', error);
+            setProgressMap({});
         } finally {
             setLoading(false);
         }
     }
+
+    const booksWithProgress = useMemo(() => {
+        return books.map((book) => {
+            const lastPage = progressMap[book.id] || 0;
+            const completionPercentage = calculateCompletion(lastPage, book.totalPages);
+            return {
+                book,
+                lastPage,
+                completionPercentage,
+            };
+        });
+    }, [books, progressMap]);
+
+    const inProgressBooks = booksWithProgress.filter((item) => item.completionPercentage > 0 && item.completionPercentage < 100);
+    const completedBooks = booksWithProgress.filter((item) => item.completionPercentage >= 100);
+    const unstartedBooks = booksWithProgress.filter((item) => item.completionPercentage === 0);
 
     if (!isAuthenticated) {
         return (
@@ -122,37 +150,67 @@ export default function LibraryPage() {
                         </div>
                     </div>
                 ) : (
-                    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {books.map((book, index) => (
-                            <motion.div
-                                key={book.id}
-                                initial={{ opacity: 0, y: 14 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ duration: 0.32, delay: index * 0.04 }}
-                            >
-                                <Link href={`/reader/${book.id}`} className="group block h-full">
-                                    <article className="card h-full transition-shadow duration-200 group-hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
-                                        <div className="relative h-64 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
-                                            <Image
-                                                src={book.coverImageUrl || defaultCoverForBook(book.id)}
-                                                alt={book.title}
-                                                fill
-                                                unoptimized
-                                                className="object-cover transition duration-500 group-hover:scale-[1.02]"
-                                            />
-                                        </div>
+                    <div className="space-y-10">
+                        {inProgressBooks.length > 0 && (
+                            <section>
+                                <div className="mb-4 flex items-center justify-between">
+                                    <h2 className="font-display text-3xl text-slate-900">Continue reading</h2>
+                                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{inProgressBooks.length} in progress</p>
+                                </div>
+                                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                    {inProgressBooks.map((item, index) => (
+                                        <BookCard
+                                            key={item.book.id}
+                                            book={item.book}
+                                            index={index}
+                                            completionPercentage={item.completionPercentage}
+                                            lastPage={item.lastPage}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
 
-                                        <h3 className="mt-6 font-display text-2xl leading-tight text-slate-900 line-clamp-2">{book.title}</h3>
-                                        <p className="mt-2 text-sm tracking-wide text-slate-500">{shortAddress(book.authorAddress)}</p>
+                        {completedBooks.length > 0 && (
+                            <section>
+                                <div className="mb-4 flex items-center justify-between">
+                                    <h2 className="font-display text-3xl text-slate-900">Completed</h2>
+                                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Reread anytime</p>
+                                </div>
+                                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                    {completedBooks.map((item, index) => (
+                                        <BookCard
+                                            key={item.book.id}
+                                            book={item.book}
+                                            index={index}
+                                            completionPercentage={item.completionPercentage}
+                                            lastPage={item.lastPage}
+                                            completed
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
 
-                                        <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4 text-sm">
-                                            <span className="text-slate-500">{book.totalPages} pages</span>
-                                            <span className="font-medium text-[hsl(var(--accent))]">{formatStxAmount(book.pagePrice)}/page</span>
-                                        </div>
-                                    </article>
-                                </Link>
-                            </motion.div>
-                        ))}
+                        {unstartedBooks.length > 0 && (
+                            <section>
+                                <div className="mb-4 flex items-center justify-between">
+                                    <h2 className="font-display text-3xl text-slate-900">Discover more</h2>
+                                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">{unstartedBooks.length} not started</p>
+                                </div>
+                                <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                    {unstartedBooks.map((item, index) => (
+                                        <BookCard
+                                            key={item.book.id}
+                                            book={item.book}
+                                            index={index}
+                                            completionPercentage={item.completionPercentage}
+                                            lastPage={item.lastPage}
+                                        />
+                                    ))}
+                                </div>
+                            </section>
+                        )}
                     </div>
                 )}
             </main>
@@ -162,4 +220,79 @@ export default function LibraryPage() {
 
 function defaultCoverForBook(bookId: number): string {
     return `${DEFAULT_COVER_BASE}/stackpad-book-${bookId}/400/600`;
+}
+
+function calculateCompletion(lastPage: number, totalPages: number): number {
+    if (!Number.isInteger(totalPages) || totalPages < 1) {
+        return 0;
+    }
+
+    if (!Number.isInteger(lastPage) || lastPage < 1) {
+        return 0;
+    }
+
+    const raw = Math.round((Math.min(lastPage, totalPages) / totalPages) * 100);
+    return Math.min(100, Math.max(0, raw));
+}
+
+function BookCard({
+    book,
+    index,
+    completionPercentage,
+    lastPage,
+    completed = false,
+}: {
+    book: Book;
+    index: number;
+    completionPercentage: number;
+    lastPage: number;
+    completed?: boolean;
+}) {
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.32, delay: index * 0.04 }}
+        >
+            <Link href={`/reader/${book.id}`} className="group block h-full">
+                <article className="card h-full transition-shadow duration-200 group-hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                    <div className="relative h-64 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                        <Image
+                            src={book.coverImageUrl || defaultCoverForBook(book.id)}
+                            alt={book.title}
+                            fill
+                            unoptimized
+                            className="object-cover transition duration-500 group-hover:scale-[1.02]"
+                        />
+                        {completed && (
+                            <div className="absolute left-3 top-3 rounded-full border border-slate-200 bg-white/90 px-2 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-slate-700">
+                                Completed
+                            </div>
+                        )}
+                    </div>
+
+                    <h3 className="mt-6 font-display text-2xl leading-tight text-slate-900 line-clamp-2">{book.title}</h3>
+                    <p className="mt-2 text-sm tracking-wide text-slate-500">{shortAddress(book.authorAddress)}</p>
+
+                    <div className="mt-4">
+                        <div className="mb-2 flex items-center justify-between text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                            <span>{completed ? 'Ready to reread' : (completionPercentage > 0 ? `Page ${Math.min(lastPage, book.totalPages)} reached` : 'Not started')}</span>
+                            <span>{completionPercentage}%</span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                            <div
+                                className="h-full rounded-full bg-[hsl(var(--accent))] transition-all duration-300"
+                                style={{ width: `${completionPercentage}%` }}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4 text-sm">
+                        <span className="text-slate-500">{book.totalPages} pages</span>
+                        <span className="font-medium text-[hsl(var(--accent))]">{formatStxAmount(book.pagePrice)}/page</span>
+                    </div>
+                </article>
+            </Link>
+        </motion.div>
+    );
 }

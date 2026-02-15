@@ -127,6 +127,33 @@ class ApiClient {
         };
     }
 
+    async getLibraryProgress(
+        walletAddress: string
+    ): Promise<Array<{ bookId: number; lastPage: number }>> {
+        const response = await fetch(
+            `${this.baseUrl}/api/content/progress?address=${encodeURIComponent(walletAddress)}`
+        );
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch library progress');
+        }
+
+        const data = await response.json() as {
+            progress?: Array<{ bookId?: number; lastPage?: number }>;
+        };
+
+        if (!Array.isArray(data.progress)) {
+            return [];
+        }
+
+        return data.progress
+            .map((entry) => ({
+                bookId: Number(entry.bookId),
+                lastPage: Number(entry.lastPage),
+            }))
+            .filter((entry) => Number.isInteger(entry.bookId) && entry.bookId > 0 && Number.isInteger(entry.lastPage) && entry.lastPage >= 0);
+    }
+
     async createDepositIntent(
         walletAddress: string,
         amount: string

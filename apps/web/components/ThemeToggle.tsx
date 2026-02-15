@@ -12,14 +12,14 @@ export function ThemeToggle() {
 
     useEffect(() => {
         const initial = resolveInitialTheme();
-        applyTheme(initial);
+        applyTheme(initial, false);
         setTheme(initial);
         setMounted(true);
     }, []);
 
     function toggleTheme() {
         const next: Theme = theme === 'dark' ? 'light' : 'dark';
-        applyTheme(next);
+        applyTheme(next, true);
         setTheme(next);
     }
 
@@ -53,17 +53,18 @@ function resolveInitialTheme(): Theme {
     if (stored === 'light' || stored === 'dark') {
         return stored;
     }
-    // Default to light mode for all users unless explicitly toggled.
-    return 'light';
+
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return prefersDark ? 'dark' : 'light';
 }
 
-function applyTheme(theme: Theme) {
+function applyTheme(theme: Theme, persist: boolean) {
     if (typeof document === 'undefined') {
         return;
     }
 
     document.documentElement.dataset.theme = theme;
-    if (typeof window !== 'undefined') {
+    if (persist && typeof window !== 'undefined') {
         window.localStorage.setItem(STORAGE_KEY, theme);
     }
 }

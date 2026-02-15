@@ -73,6 +73,7 @@ export default function ReaderPage() {
     const pendingButtonTurnRef = useRef<'next' | 'prev' | null>(null);
     const topUpAttemptRef = useRef(0);
     const hasShownResumeToastRef = useRef(false);
+    const hasShownCompletionToastRef = useRef(false);
 
     useEffect(() => {
         if (!isAuthenticated || !userAddress || Number.isNaN(bookId)) {
@@ -80,6 +81,7 @@ export default function ReaderPage() {
         }
 
         hasShownResumeToastRef.current = false;
+        hasShownCompletionToastRef.current = false;
         setCurrentPage(1);
         void initializeReader(userAddress);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -101,6 +103,28 @@ export default function ReaderPage() {
             }
         };
     }, []);
+
+    useEffect(() => {
+        if (!book || !isAuthenticated) {
+            return;
+        }
+
+        const isCompletedNow = readerState === 'ready'
+            && !isDimmed
+            && currentPage === book.totalPages;
+
+        if (!isCompletedNow || hasShownCompletionToastRef.current) {
+            return;
+        }
+
+        hasShownCompletionToastRef.current = true;
+        pushToast({
+            tone: 'success',
+            title: 'Book completed',
+            message: `You finished "${book.title}".`,
+            durationMs: 3200,
+        });
+    }, [book, currentPage, isAuthenticated, isDimmed, pushToast, readerState]);
 
     async function initializeReader(address: string) {
         try {
@@ -540,6 +564,17 @@ export default function ReaderPage() {
 
     const progress = book ? (currentPage / book.totalPages) * 100 : 0;
     const panelFunding = insufficientCredit?.topUp || fundingOptions;
+    const isBookCompleted = Boolean(
+        book
+        && readerState === 'ready'
+        && !isDimmed
+        && currentPage === book.totalPages
+    );
+
+    function restartBook() {
+        pendingButtonTurnRef.current = null;
+        setCurrentPage(1);
+    }
 
     return (
         <div className="app-shell">
@@ -666,6 +701,8 @@ export default function ReaderPage() {
                         >
                             Add credits
                         </button>
+                    ) : isBookCompleted ? (
+                        <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Book complete</p>
                     ) : (
                         <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Swipe horizontally</p>
                     )}
@@ -675,9 +712,55 @@ export default function ReaderPage() {
                         disabled={!book || currentPage >= book.totalPages}
                         className="btn-secondary min-w-[8.5rem] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        Next
+                        {isBookCompleted ? 'Finished' : 'Next'}
                     </button>
                 </div>
+
+                <AnimatePresence>
+                    {isBookCompleted && book && (
+                        <motion.section
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 8 }}
+                            transition={{ duration: 0.28, ease: 'easeOut' }}
+                            className="surface mt-7 rounded-3xl p-6 md:p-8"
+                        >
+                            <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-[hsl(var(--accent))]">
+                                <CompletionIcon />
+                            </div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Reading milestone</p>
+                            <h2 className="mt-2 font-display text-3xl leading-tight text-slate-900">
+                                You finished {book.title}
+                            </h2>
+                            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
+                                Progress is saved automatically. Start over, return to the library, or keep your wallet topped up for your next title.
+                            </p>
+
+                            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                                    <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Pages completed</p>
+                                    <p className="mt-1 text-lg font-medium text-slate-900">{book.totalPages}</p>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                                    <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">Reading progress</p>
+                                    <p className="mt-1 text-lg font-medium text-slate-900">100%</p>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex flex-wrap gap-3">
+                                <button type="button" onClick={restartBook} className="btn-primary">
+                                    Read again
+                                </button>
+                                <Link href="/library" className="btn-secondary">
+                                    Back to library
+                                </Link>
+                                <button type="button" onClick={openManualTopUpPanel} className="btn-secondary">
+                                    Manage credits
+                                </button>
+                            </div>
+                        </motion.section>
+                    )}
+                </AnimatePresence>
             </main>
 
             <AnimatePresence>
@@ -904,4 +987,13 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
+}
+
+function CompletionIcon() {
+    return (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 12.5 10.3 16 17 9.5" />
+            <circle cx="12" cy="12" r="9" />
+        </svg>
+    );
 }

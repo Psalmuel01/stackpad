@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
     createDepositIntent,
     getCreditFundingOptions,
+    getPlatformRevenueSummary,
     getReaderCreditBalance,
     reconcilePendingDepositIntents,
     settleAuthorRevenueBatch,
@@ -224,6 +225,30 @@ router.post('/settle-authors', async (req: Request, res: Response) => {
         console.error('Failed to settle author payouts:', error);
         res.status(500).json({
             error: error instanceof Error ? error.message : 'Failed to settle author payouts',
+        });
+    }
+});
+
+/**
+ * GET /api/credits/platform-revenue
+ * Returns pending/settled platform fee totals from unlock-time split accounting.
+ */
+router.get('/platform-revenue', async (_req: Request, res: Response) => {
+    try {
+        const summary = await getPlatformRevenueSummary();
+        res.json({
+            success: true,
+            feeBps: summary.feeBps,
+            pendingAmount: summary.pendingAmount,
+            settledAmount: summary.settledAmount,
+            totalAmount: summary.totalAmount,
+            pendingEvents: summary.pendingEvents,
+            totalEvents: summary.totalEvents,
+        });
+    } catch (error) {
+        console.error('Failed to fetch platform revenue summary:', error);
+        res.status(500).json({
+            error: error instanceof Error ? error.message : 'Failed to fetch platform revenue summary',
         });
     }
 });

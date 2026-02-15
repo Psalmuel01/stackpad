@@ -58,11 +58,11 @@ export default function Home() {
                     >
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-as-You-Read eBook Platform</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            A wallet-backed reading platform with prepaid credits and instant unlocks.
+                            Prepaid x402 reading, with instant unlocks and no per-page wallet friction.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
-                            Readers top up once, then page and chapter access deducts automatically in the background.
-                            HTTP 402 still signals when balance runs low, without per-page wallet friction.
+                            Readers fund credits once, then unlock pages and chapters automatically as they read.
+                            When balance runs low, the API returns HTTP 402 with exact top-up terms and verification continues in the background.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
@@ -84,18 +84,18 @@ export default function Home() {
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
                             {
-                                title: 'Prepaid reading credits',
-                                detail: 'Deposit STX once and keep reading while per-page deductions happen automatically.',
+                                title: 'Wallet-backed credit balance',
+                                detail: 'One top-up funds multiple unlocks. Reading deductions are atomic, immediate, and tied to your wallet address.',
                                 icon: <WalletIcon />,
                             },
                             {
-                                title: 'HTTP 402 top-up prompt',
-                                detail: 'When balance is low, the API returns 402 with precise top-up terms for the reader wallet.',
+                                title: 'Strict x402 signaling',
+                                detail: 'Locked content returns HTTP 402 with payment-required headers. Verification returns payment-response headers.',
                                 icon: <LockIcon />,
                             },
                             {
-                                title: 'Fair author payouts',
-                                detail: 'Usage events are logged per unlock and settled in reliable background batches.',
+                                title: 'Treasury payout batching',
+                                detail: 'Author revenue is tracked per unlock and broadcast from treasury in batched on-chain settlements.',
                                 icon: <BookIcon />,
                             },
                         ].map((item) => (
@@ -115,18 +115,18 @@ export default function Home() {
                         <div className="mb-8">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow detail</p>
                             <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                                How prepaid pay-as-you-read works across wallet, backend, and settlement.
+                                How the live Stackpad architecture works in production.
                             </h2>
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             {[
-                                ['1', 'Reader reaches locked content', 'The API checks whether the requested page/chapter is already unlocked.'],
-                                ['2', 'Balance check runs atomically', 'If credits are available, the backend deducts and unlocks in one transaction.'],
-                                ['3', 'Low balance returns HTTP 402', 'The response includes top-up amount, network, and recipient details.'],
-                                ['4', 'Reader signs one top-up transfer', 'Wallet sends STX to Stackpad treasury with a tracked deposit intent memo.'],
-                                ['5', 'Backend verifies and credits', 'Deposit is confirmed via indexer checks and reflected in reader balance.'],
-                                ['6', 'Reading continues instantly', 'Subsequent pages unlock without repeated wallet popups until balance runs out.'],
+                                ['1', 'Reader opens a book', 'The reader resumes where they left off and requests the next protected page or chapter.'],
+                                ['2', 'Backend checks entitlements', 'Existing unlocks are reused first; no duplicate charges for content already unlocked.'],
+                                ['3', 'Credits deduct atomically', 'If balance is sufficient, deduction and unlock happen in one DB transaction and content returns instantly.'],
+                                ['4', 'Low balance triggers HTTP 402', 'The response includes x402 terms and top-up requirements through payment-required headers.'],
+                                ['5', 'Wallet submits one top-up', 'Reader signs a transfer to treasury with a tracked deposit intent and memo binding.'],
+                                ['6', 'Verification auto-polls', 'Backend verifies settlement, credits balance, emits payment-response headers, and continues reading.'],
                             ].map(([step, title, detail]) => (
                                 <article key={step} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
                                     <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
@@ -146,8 +146,8 @@ export default function Home() {
                             </div>
                             <h3 className="font-display text-3xl text-slate-900">Reader experience</h3>
                             <p className="mt-4 text-base leading-8 text-slate-600">
-                                Read in a focused interface and only pay when you cross a locked boundary. No subscription
-                                overhead, no unnecessary checkout noise.
+                                Read in a focused interface with progress memory, PDF or text rendering, and automatic unlock flow.
+                                You only sign wallet actions when funding credits, not on every page turn.
                             </p>
                         </motion.article>
 
@@ -157,8 +157,8 @@ export default function Home() {
                             </div>
                             <h3 className="font-display text-3xl text-slate-900">Publisher console</h3>
                             <p className="mt-4 text-base leading-8 text-slate-600">
-                                Publish titles, set page/chapter pricing, and route payouts to your address. Every paid unlock is
-                                measurable, transparent, and tied to actual consumption.
+                                Upload manual text or PDF files, set page pricing, and manage published books from a dedicated console.
+                                Revenue events are measurable and settled to authors through treasury-signed STX batches.
                             </p>
                         </motion.article>
                     </div>
@@ -167,11 +167,11 @@ export default function Home() {
                 <section className="layout-wrap pb-26 md:pb-36">
                     <motion.div {...fadeUp} className="surface p-10 md:p-14">
                         <h4 className="max-w-2xl font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                            Monetize reading with precision, not guesswork.
+                            Usage-based publishing that scales beyond demo mode.
                         </h4>
                         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                            Move from static pricing to usage-based access, where readers pay only for what they consume and
-                            authors earn from real engagement.
+                            Stackpad combines wallet-based funding, x402 HTTP access control, and batched author payouts so
+                            readers get speed and authors get reliable settlement.
                         </p>
                         <div className="mt-10 flex flex-wrap gap-4">
                             <Link href="/library" className="btn-primary">Browse catalog</Link>

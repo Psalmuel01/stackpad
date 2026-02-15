@@ -10,6 +10,44 @@ import {
 const router = Router();
 
 /**
+ * GET /api/content/progress?address=SP...
+ * Returns reading progress for all books for the given reader.
+ */
+router.get('/progress', async (req, res: Response) => {
+    try {
+        const readerAddress = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+
+        if (!readerAddress) {
+            res.status(400).json({ error: 'Reader wallet address is required' });
+            return;
+        }
+
+        const progressLookup = await pool.query(
+            `SELECT book_id, last_page
+             FROM reader_book_progress
+             WHERE wallet_address = $1`,
+            [readerAddress]
+        );
+
+        const progress = progressLookup.rows
+            .map((row) => ({
+                bookId: Number(row.book_id),
+                lastPage: Number(row.last_page),
+            }))
+            .filter((entry) => Number.isInteger(entry.bookId) && entry.bookId > 0 && Number.isInteger(entry.lastPage) && entry.lastPage >= 0);
+
+        res.json({
+            success: true,
+            walletAddress: readerAddress,
+            progress,
+        });
+    } catch (error) {
+        console.error('Error fetching library reading progress:', error);
+        res.status(500).json({ error: 'Failed to fetch reading progress' });
+    }
+});
+
+/**
  * GET /api/content/:bookId/progress?address=SP...
  * Returns last read page for the given reader and book.
  */

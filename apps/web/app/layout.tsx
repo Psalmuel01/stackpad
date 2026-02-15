@@ -28,10 +28,11 @@ export default function RootLayout({
         var stored = localStorage.getItem(key);
         var theme = stored === 'dark' || stored === 'light'
           ? stored
-          : 'light';
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         document.documentElement.setAttribute('data-theme', theme);
       } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'light');
+        var fallbackDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.setAttribute('data-theme', fallbackDark ? 'dark' : 'light');
       }
     })();
   `;

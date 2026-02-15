@@ -129,6 +129,23 @@ CREATE TABLE IF NOT EXISTS author_revenue_events (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Platform fee events generated from prepaid deductions
+CREATE TABLE IF NOT EXISTS platform_revenue_events (
+  id SERIAL PRIMARY KEY,
+  reader_address VARCHAR(50) NOT NULL,
+  book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+  page_number INTEGER,
+  chapter_number INTEGER,
+  amount BIGINT NOT NULL CHECK (amount >= 0),
+  gross_amount BIGINT NOT NULL CHECK (gross_amount >= 0),
+  author_amount BIGINT NOT NULL CHECK (author_amount >= 0),
+  credit_transaction_id INTEGER REFERENCES credit_transactions(id) ON DELETE SET NULL,
+  settled BOOLEAN NOT NULL DEFAULT FALSE,
+  settled_at TIMESTAMP,
+  settlement_reference TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Settlement batches for author payout accounting
 CREATE TABLE IF NOT EXISTS author_settlement_batches (
   id SERIAL PRIMARY KEY,
@@ -210,4 +227,6 @@ CREATE INDEX IF NOT EXISTS idx_reader_progress_updated ON reader_book_progress(w
 CREATE INDEX IF NOT EXISTS idx_author_revenue_author ON author_revenue_events(author_address, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_author_revenue_settled ON author_revenue_events(settled, created_at);
 CREATE INDEX IF NOT EXISTS idx_author_revenue_settlement_status ON author_revenue_events(settlement_status, created_at);
+CREATE INDEX IF NOT EXISTS idx_platform_revenue_settled ON platform_revenue_events(settled, created_at);
+CREATE INDEX IF NOT EXISTS idx_platform_revenue_book ON platform_revenue_events(book_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_author_settlement_batch_status ON author_settlement_batches(status, created_at);
