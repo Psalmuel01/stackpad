@@ -4,6 +4,8 @@ Pay-as-you-read publishing on Stacks with wallet-backed prepaid credits and HTTP
 
 Readers unlock only the content they cross into. Authors receive STX directly to their payout address.
 
+**Presentation Slide**: https://docs.google.com/presentation/d/1HorFCV5kT-_wlwv9FH4zbb46K6q37668/edit?usp=sharing&ouid=100376783501249132915&rtpof=true&sd=true
+
 ## Current Payment Architecture
 
 1. Reader requests locked content.
