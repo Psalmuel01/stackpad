@@ -6,6 +6,8 @@ Readers unlock only the content they cross into. Authors receive STX directly to
 
 **Presentation Slide**: https://docs.google.com/presentation/d/1HorFCV5kT-_wlwv9FH4zbb46K6q37668/edit?usp=sharing&ouid=100376783501249132915&rtpof=true&sd=true
 
+**Demo Video**: https://drive.google.com/file/d/12QhKxhJzQp6CrgPLSkPWM1ucFcl7btmj/view?usp=sharing
+
 ## Current Payment Architecture
 
 1. Reader requests locked content.
