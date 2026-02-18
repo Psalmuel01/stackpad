@@ -24,7 +24,7 @@ export default function Home() {
                     <BrandLogo />
                     <div className="flex items-center gap-3">
                         <Link href="/library" className="btn-secondary">Library</Link>
-                        <Link href="/author" className="btn-secondary">Author</Link>
+                        <Link href="/author" className="btn-secondary">Publish</Link>
                         <ThemeToggle />
                         <WalletConnect />
                     </div>
@@ -49,6 +49,7 @@ export default function Home() {
                     <BookArtIcon compact />
                 </div>
 
+                {/* HERO: Stop paying for books you never finish */}
                 <section className="layout-wrap pb-20 pt-22 md:pb-28 md:pt-28">
                     <motion.div
                         initial={{ opacity: 0, y: 14 }}
@@ -56,46 +57,55 @@ export default function Home() {
                         transition={{ duration: 0.45 }}
                         className="relative z-10 max-w-5xl"
                     >
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-as-You-Read eBook Platform</p>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Pay-as-you-Read</p>
                         <h1 className="mt-7 max-w-4xl font-display text-5xl leading-tight text-slate-900 md:text-7xl md:leading-tight">
-                            Prepaid x402 reading, with instant unlocks and no per-page wallet friction.
+                            Stop paying for books you never finish.
                         </h1>
                         <p className="mt-10 max-w-2xl text-lg leading-8 text-slate-600">
-                            Readers fund credits once, then unlock pages and chapters automatically as they read.
-                            When balance runs low, the API returns HTTP 402 with exact top-up terms and verification continues in the background.
+                            Read by the chapter. Pay as you go. No subscriptions, no waste.
+                            Deposit once, read freely—only pay for the pages you actually read.
+                            When an author earns your attention, they earn your payment.
                         </p>
                         <div className="mt-12 flex flex-wrap gap-4">
                             {isAuthenticated ? (
                                 <>
-                                    <Link href="/library" className="btn-primary">Explore catalog</Link>
-                                    <Link href="/author" className="btn-secondary">Start publishing</Link>
+                                    <Link href="/library" className="btn-primary">Start reading</Link>
+                                    <Link href="/author" className="btn-secondary">Publish your work</Link>
                                 </>
                             ) : (
                                 <>
-                                    <button onClick={connectWallet} className="btn-primary">Connect wallet</button>
-                                    <Link href="/library" className="btn-secondary">Explore catalog</Link>
+                                    <button onClick={connectWallet} className="btn-primary">Connect wallet & start</button>
+                                    <Link href="/library" className="btn-secondary">Browse books</Link>
                                 </>
                             )}
                         </div>
                     </motion.div>
                 </section>
 
+                {/* THE PROBLEM: Visceral pain points */}
                 <section className="layout-wrap pb-16 md:pb-20">
+                    <motion.div {...fadeUp} className="mb-12 max-w-2xl">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">The problem</p>
+                        <h2 className="mt-4 font-display text-3xl leading-tight text-slate-900 md:text-4xl">
+                            The $15 book you read 3 chapters of. The subscription you forgot to cancel.
+                        </h2>
+                    </motion.div>
+
                     <div className="grid gap-5 md:grid-cols-3">
                         {[
                             {
-                                title: 'Wallet-backed credit balance',
-                                detail: 'One top-up funds multiple unlocks. Reading deductions are atomic, immediate, and tied to your wallet address.',
+                                title: 'Wasted money',
+                                detail: 'Traditional publishing forces you to bet on books before you know if they\'re worth your time.',
                                 icon: <WalletIcon />,
                             },
                             {
-                                title: 'Strict x402 signaling',
-                                detail: 'Locked content returns HTTP 402 with payment-required headers. Verification returns payment-response headers.',
+                                title: 'Unfair to authors',
+                                detail: 'Authors get paid upfront, not for actually keeping you hooked. No feedback loop for quality.',
                                 icon: <LockIcon />,
                             },
                             {
-                                title: 'Treasury payout batching',
-                                detail: 'Author revenue is tracked per unlock and broadcast from treasury in batched on-chain settlements.',
+                                title: 'Zero exploration',
+                                detail: 'High upfront costs kill curiosity. You stick to "safe" bestsellers instead of discovering niche gems.',
                                 icon: <BookIcon />,
                             },
                         ].map((item) => (
@@ -103,79 +113,126 @@ export default function Home() {
                                 <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
                                     {item.icon}
                                 </div>
-                                <h2 className="font-display text-2xl text-slate-900">{item.title}</h2>
+                                <h3 className="font-display text-2xl text-slate-900">{item.title}</h3>
                                 <p className="mt-4 text-sm leading-7 text-slate-600">{item.detail}</p>
                             </motion.article>
                         ))}
                     </div>
                 </section>
 
+                {/* HOW IT WORKS: 4 simple steps */}
                 <section className="layout-wrap pb-18 md:pb-24">
-                    <motion.div {...fadeUp} className="surface p-8 md:p-12">
-                        <div className="mb-8">
-                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Flow detail</p>
-                            <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                                How the live Stackpad architecture works in production.
-                            </h2>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            {[
-                                ['1', 'Reader opens a book', 'The reader resumes where they left off and requests the next protected page or chapter.'],
-                                ['2', 'Backend checks entitlements', 'Existing unlocks are reused first; no duplicate charges for content already unlocked.'],
-                                ['3', 'Credits deduct atomically', 'If balance is sufficient, deduction and unlock happen in one DB transaction and content returns instantly.'],
-                                ['4', 'Low balance triggers HTTP 402', 'The response includes x402 terms and top-up requirements through payment-required headers.'],
-                                ['5', 'Wallet submits one top-up', 'Reader signs a transfer to treasury with a tracked deposit intent and memo binding.'],
-                                ['6', 'Verification auto-polls', 'Backend verifies settlement, credits balance, emits payment-response headers, and continues reading.'],
-                            ].map(([step, title, detail]) => (
-                                <article key={step} className="rounded-xl border border-slate-100 bg-slate-50/70 p-4">
-                                    <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
-                                    <h3 className="mt-2 text-lg font-medium text-slate-900">{title}</h3>
-                                    <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>
-                                </article>
-                            ))}
-                        </div>
+                    <motion.div {...fadeUp} className="mb-12 max-w-2xl">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">How it works</p>
+                        <h2 className="mt-4 font-display text-4xl leading-tight text-slate-900 md:text-5xl">
+                            Read in 30 seconds. No constant wallet pop-ups.
+                        </h2>
                     </motion.div>
+
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                        {[
+                            {
+                                step: '1',
+                                title: 'Drop in some STX',
+                                detail: 'Like a coffee card. One deposit, no more interruptions.',
+                            },
+                            {
+                                step: '2',
+                                title: 'Start anywhere',
+                                detail: 'No "buy now" buttons. Just pick a book and swipe.',
+                            },
+                            {
+                                step: '3',
+                                title: 'Pay per page',
+                                detail: 'Fractions of a cent per chapter. You won\'t even feel it.',
+                            },
+                            {
+                                step: '4',
+                                title: 'Authors get paid',
+                                detail: 'Not upfront—real engagement, real rewards. As you read.',
+                            },
+                        ].map(({ step, title, detail }) => (
+                            <motion.article key={step} {...fadeUp} className="rounded-xl border border-slate-100 bg-slate-50/70 p-6">
+                                <p className="text-xs font-semibold tracking-[0.16em] text-[hsl(var(--accent))]">STEP {step}</p>
+                                <h3 className="mt-3 text-lg font-medium text-slate-900">{title}</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>
+                            </motion.article>
+                        ))}
+                    </div>
                 </section>
 
+                {/* READER + AUTHOR BENEFITS: Split focus */}
                 <section className="layout-wrap pb-20 md:pb-28">
                     <div className="grid gap-6 md:grid-cols-2">
                         <motion.article {...fadeUp} className="surface p-8 md:p-10">
                             <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
                                 <ReaderIcon />
                             </div>
-                            <h3 className="font-display text-3xl text-slate-900">Reader experience</h3>
-                            <p className="mt-4 text-base leading-8 text-slate-600">
-                                Read in a focused interface with progress memory, PDF or text rendering, and automatic unlock flow.
-                                You only sign wallet actions when funding credits, not on every page turn.
-                            </p>
+                            <h3 className="font-display text-3xl text-slate-900">For readers</h3>
+                            <p className="mt-2 text-sm text-slate-500">Pay only for what you finish. Discover freely.</p>
+                            <ul className="mt-6 space-y-3 text-base leading-7 text-slate-600">
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>Start 10 books this month. Finish 2. Pay for 2.</span>
+                                </li>
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>No monthly fees. No &quot;are you sure?&quot; pop-ups.</span>
+                                </li>
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>Discover weird, risky, niche books—the cost of trying is basically zero.</span>
+                                </li>
+                            </ul>
+                            <div className="mt-8">
+                                <Link href="/library" className="btn-primary">Explore catalog</Link>
+                            </div>
                         </motion.article>
 
                         <motion.article {...fadeUp} className="surface p-8 md:p-10">
                             <div className="mb-5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
                                 <AuthorIcon />
                             </div>
-                            <h3 className="font-display text-3xl text-slate-900">Publisher console</h3>
-                            <p className="mt-4 text-base leading-8 text-slate-600">
-                                Upload manual text or PDF files, set page pricing, and manage published books from a dedicated console.
-                                Revenue events are measurable and settled to authors through treasury-signed STX batches.
-                            </p>
+                            <h3 className="font-display text-3xl text-slate-900">For authors</h3>
+                            <p className="mt-2 text-sm text-slate-500">Get paid for engagement, not just downloads.</p>
+                            <ul className="mt-6 space-3 text-base leading-7 text-slate-600">
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>Revenue matches actual reading, not just downloads.</span>
+                                </li>
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>Reward engaged readers: free chapters for reviews or shares.</span>
+                                </li>
+                                <li className="flex gap-3">
+                                    <span className="text-[hsl(var(--accent))]">→</span>
+                                    <span>Stop fighting piracy—make access easier than stealing.</span>
+                                </li>
+                            </ul>
+                            <div className="mt-8">
+                                <Link href="/author" className="btn-secondary">Start publishing</Link>
+                            </div>
                         </motion.article>
                     </div>
                 </section>
 
+                {/* FINAL CTA */}
                 <section className="layout-wrap pb-26 md:pb-36">
-                    <motion.div {...fadeUp} className="surface p-10 md:p-14">
+                    <motion.div {...fadeUp} className="surface p-10 md:p-14 text-center md:text-left">
                         <h4 className="max-w-2xl font-display text-4xl leading-tight text-slate-900 md:text-5xl">
-                            Usage-based publishing that scales beyond demo mode.
+                            Fair for readers. Fair for writers.
                         </h4>
                         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-                            Stackpad combines wallet-based funding, x402 HTTP access control, and batched author payouts so
-                            readers get speed and authors get reliable settlement.
+                            Join the platform where attention actually matters.
+                            No subscriptions. No waste. Just reading.
                         </p>
                         <div className="mt-10 flex flex-wrap gap-4">
-                            <Link href="/library" className="btn-primary">Browse catalog</Link>
-                            <Link href="/author" className="btn-secondary">Open publisher console</Link>
+                            {isAuthenticated ? (
+                                <Link href="/library" className="btn-primary">Start reading now</Link>
+                            ) : (
+                                <button onClick={connectWallet} className="btn-primary">Connect wallet & start reading</button>
+                            )}
+                            <Link href="/author" className="btn-secondary">I'm an author</Link>
                         </div>
                     </motion.div>
                 </section>
@@ -184,6 +241,7 @@ export default function Home() {
     );
 }
 
+// Icons remain unchanged
 function SparkleIcon() {
     return (
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
