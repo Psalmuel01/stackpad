@@ -232,7 +232,7 @@ export default function Home() {
                             ) : (
                                 <button onClick={connectWallet} className="btn-primary">Connect wallet & start reading</button>
                             )}
-                            <Link href="/author" className="btn-secondary">I'm an author</Link>
+                            <Link href="/author" className="btn-secondary">I&apos;m an author</Link>
                         </div>
                     </motion.div>
                 </section>
